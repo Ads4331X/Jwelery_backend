@@ -4,7 +4,7 @@ const router = express.Router();
 const prisma = require("../../config/prisma");
 const generateToken = require("../../utils/generateToken");
 
-// POST /api/customer/auth — Customer login
+// POST /api/admin/auth — Admin login
 router.post("/", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -16,34 +16,33 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const user = await prisma.user.findUnique({
+    const admin = await prisma.admin.findUnique({
       where: { email },
       select: {
         id: true,
         email: true,
         username: true,
-        firstName: true,
-        lastName: true,
         password: true,
+        role: true,
         isActive: true,
       },
     });
 
-    if (!user) {
+    if (!admin) {
       return res.status(401).json({
         message: "Invalid credentials.",
         success: false,
       });
     }
 
-    if (!user.isActive) {
+    if (!admin.isActive) {
       return res.status(403).json({
-        message: "Account is deactivated.",
+        message: "Account is deactivated. Contact super admin.",
         success: false,
       });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await bcrypt.compare(password, admin.password);
 
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -52,32 +51,30 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Update last login timestamp
-    await prisma.user.update({
-      where: { id: user.id },
+    await prisma.admin.update({
+      where: { id: admin.id },
       data: { lastLoginAt: new Date() },
     });
 
-    // Generate JWT
     const token = generateToken({
-      id: user.id,
-      type: "customer",
+      id: admin.id,
+      role: admin.role,
+      type: "admin",
     });
 
     return res.json({
       message: "Login successful.",
       success: true,
       data: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        firstName: user.firstName,
-        lastName: user.lastName,
+        id: admin.id,
+        email: admin.email,
+        username: admin.username,
+        role: admin.role,
       },
       token,
     });
   } catch (err) {
-    console.error("Customer login error:", err);
+    console.error("Admin login error:", err);
     return res.status(500).json({
       message: "Server error.",
       success: false,

@@ -186,10 +186,7 @@ router.delete(
       });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({
-        success: false,
-        message: "Server error",
-      });
+      return res.status(500).json({ success: false, message: "Server error" });
     }
   },
 );
@@ -214,7 +211,6 @@ router.put(
 
       const { imageUrls = [], ...productData } = req.body;
 
-      // Replace images (simple + predictable behavior)
       if (imageUrls.length > 0) {
         await prisma.productImage.deleteMany({ where: { productId: id } });
       }
@@ -237,16 +233,10 @@ router.put(
         include: { images: true, category: true },
       });
 
-      return res.json({
-        success: true,
-        data: formatProduct(product),
-      });
+      return res.json({ success: true, data: formatProduct(product) });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({
-        success: false,
-        message: "Server error",
-      });
+      return res.status(500).json({ success: false, message: "Server error" });
     }
   },
 );

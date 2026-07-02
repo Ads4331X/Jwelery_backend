@@ -7,7 +7,6 @@ const requireRole = require("../../middleware/roleMiddleware");
 
 const saltRounds = 10;
 
-// Helper to format admin response
 const formatAdmin = (admin) => ({
   id: admin.id,
   email: admin.email,

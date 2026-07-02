@@ -21,12 +21,12 @@ app.use(express.json());
 const uploadRoute = require("./uploadroute");
 app.use("/api/uploads", uploadRoute);
 
-const adminAuth = require("./api/admin/auth");
-const adminSignup = require("./api/admin/signup");
-const adminRole = require("./api/admin/role");
-const adminAccounts = require("./api/admin/accounts");
-const adminMetalRates = require("./api/admin/metalRates");
-const adminSiteSettings = require("./api/admin/siteSettings");
+const adminAuth = require("./routes/admin/auth");
+const adminSignup = require("./routes/admin/signup");
+const adminRole = require("./routes/admin/role");
+const adminAccounts = require("./routes/admin/accounts");
+const adminMetalRates = require("./routes/admin/metalRates");
+const adminSiteSettings = require("./routes/admin/siteSettings");
 
 app.use("/api/admin/auth", adminAuth);
 app.use("/api/admin/signup", adminSignup);
@@ -35,16 +35,16 @@ app.use("/api/admin/accounts", adminAccounts);
 app.use("/api/admin/metal-rates", adminMetalRates);
 app.use("/api/admin/site-settings", adminSiteSettings);
 
-const customerAuth = require("./api/customer/auth");
-const customerSignup = require("./api/customer/signup");
+const customerAuth = require("./routes/customer/auth");
+const customerSignup = require("./routes/customer/signup");
 app.use("/api/customer/auth", customerAuth);
 app.use("/api/customer/signup", customerSignup);
 
-const inquiry = require("./api/inquery/index");
+const inquiry = require("./routes/inquery/index");
 app.use("/api/inquiry", inquiry);
 
-const product = require("./api/products/index");
-const categories = require("./api/categories/index");
+const product = require("./routes/products/index");
+const categories = require("./routes/categories/index");
 app.use("/api/products", product);
 app.use("/api/categories", categories);
 

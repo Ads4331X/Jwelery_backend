@@ -3,16 +3,25 @@ const router = express.Router();
 const prisma = require("../../config/prisma");
 const authMiddleware = require("../../middleware/authMiddleware");
 
-// Helper to convert rate per gram to tola and 10 grams
 const formatRates = (goldRate, silverRate, visibleSetting) => {
   const TOLA_IN_GRAMS = 11.6638;
   return {
-    gold_tola: goldRate ? Number((goldRate.ratePerGram * TOLA_IN_GRAMS).toFixed(2)) : 0,
-    gold_ten_gram: goldRate ? Number((goldRate.ratePerGram * 10).toFixed(2)) : 0,
-    silver_tola: silverRate ? Number((silverRate.ratePerGram * TOLA_IN_GRAMS).toFixed(2)) : 0,
-    silver_ten_gram: silverRate ? Number((silverRate.ratePerGram * 10).toFixed(2)) : 0,
+    gold_tola: goldRate
+      ? Number((goldRate.ratePerGram * TOLA_IN_GRAMS).toFixed(2))
+      : 0,
+    gold_ten_gram: goldRate
+      ? Number((goldRate.ratePerGram * 10).toFixed(2))
+      : 0,
+    silver_tola: silverRate
+      ? Number((silverRate.ratePerGram * TOLA_IN_GRAMS).toFixed(2))
+      : 0,
+    silver_ten_gram: silverRate
+      ? Number((silverRate.ratePerGram * 10).toFixed(2))
+      : 0,
     visible: visibleSetting?.value === "true",
-    updated_at: goldRate ? goldRate.createdAt.toISOString() : new Date().toISOString(),
+    updated_at: goldRate
+      ? goldRate.createdAt.toISOString()
+      : new Date().toISOString(),
   };
 };
 
@@ -23,19 +32,19 @@ router.get("/", async (req, res) => {
       where: { metalType: "GOLD" },
       orderBy: { createdAt: "desc" },
     });
-    
+
     const silverRate = await prisma.metalRate.findFirst({
       where: { metalType: "SILVER" },
       orderBy: { createdAt: "desc" },
     });
 
     const visibleSetting = await prisma.siteSetting.findUnique({
-      where: { key: "metal_rates_visible" }
+      where: { key: "metal_rates_visible" },
     });
 
     return res.json({
       success: true,
-      data: formatRates(goldRate, silverRate, visibleSetting)
+      data: formatRates(goldRate, silverRate, visibleSetting),
     });
   } catch (error) {
     console.error("Fetch metal rates error:", error);
@@ -43,11 +52,10 @@ router.get("/", async (req, res) => {
   }
 });
 
-// PUT /api/admin/metal-rates/visibility
 router.put("/visibility", authMiddleware, async (req, res) => {
   try {
     const { visible } = req.body;
-    
+
     await prisma.siteSetting.upsert({
       where: { key: "metal_rates_visible" },
       update: { value: visible ? "true" : "false" },
@@ -61,28 +69,27 @@ router.put("/visibility", authMiddleware, async (req, res) => {
   }
 });
 
-// Manual update (fallback if API fails or admin wants to override)
 router.put("/", authMiddleware, async (req, res) => {
   try {
     const { gold_ten_gram, silver_ten_gram } = req.body;
-    
+
     if (gold_ten_gram) {
       await prisma.metalRate.create({
         data: {
           metalType: "GOLD",
           ratePerGram: gold_ten_gram / 10,
-          updatedBy: req.user.id
-        }
+          updatedBy: req.user.id,
+        },
       });
     }
-    
+
     if (silver_ten_gram) {
       await prisma.metalRate.create({
         data: {
           metalType: "SILVER",
           ratePerGram: silver_ten_gram / 10,
-          updatedBy: req.user.id
-        }
+          updatedBy: req.user.id,
+        },
       });
     }
 

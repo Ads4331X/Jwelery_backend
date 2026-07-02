@@ -3,10 +3,8 @@ const router = express.Router();
 const prisma = require("../../config/prisma");
 const authMiddleware = require("../../middleware/authMiddleware");
 
-// GET /api/admin/role — Get the authenticated admin's role
 router.get("/", authMiddleware, async (req, res) => {
   try {
-    // req.user is set by authMiddleware: { id, role, type }
     if (req.user.type !== "admin") {
       return res.status(403).json({
         message: "This endpoint is for admins only.",

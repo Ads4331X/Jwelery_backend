@@ -3,22 +3,25 @@ const router = express.Router();
 const bcrypt = require("bcrypt");
 const { body, validationResult } = require("express-validator");
 const prisma = require("../../config/prisma");
-const generateToken = require("../../utils/generateToken");
+const authMiddleware = require("../../middleware/authMiddleware");
+const requireRole = require("../../middleware/roleMiddleware");
 
 const saltRounds = 10;
 
-// POST /api/customer/signup — Customer registration (open)
 router.post(
   "/",
+  authMiddleware,
+  requireRole("SUPER_ADMIN"),
   [
     body("email").isEmail().withMessage("Valid email is required."),
     body("password")
       .isLength({ min: 6 })
       .withMessage("Password must be at least 6 characters."),
-    body("firstName").notEmpty().withMessage("First name is required."),
-    body("lastName").optional(),
-    body("username").optional(),
-    body("phone").optional(),
+    body("username").notEmpty().withMessage("Username is required."),
+    body("role")
+      .optional()
+      .isIn(["SUPER_ADMIN", "ADMIN", "DELIVERY_STAFF"])
+      .withMessage("Role must be SUPER_ADMIN, ADMIN, or DELIVERY_STAFF."),
   ],
   async (req, res) => {
     try {
@@ -32,57 +35,42 @@ router.post(
         });
       }
 
-      const { email, password, firstName, lastName, username, phone } =
-        req.body;
+      const { email, password, username, role } = req.body;
 
-      // Check for duplicate email
-      const existing = await prisma.user.findUnique({
-        where: { email },
-      });
-
+      const existing = await prisma.admin.findUnique({ where: { email } });
       if (existing) {
         return res.status(409).json({
-          message: "An account with this email already exists.",
+          message: "An admin with this email already exists.",
           success: false,
         });
       }
 
-      // Hash password
       const hashed = await bcrypt.hash(password, saltRounds);
 
-      const user = await prisma.user.create({
+      const admin = await prisma.admin.create({
         data: {
           email,
           password: hashed,
-          firstName,
-          lastName: lastName || null,
-          username: username || null,
-          phone: phone || null,
+          username,
+          role: role || "ADMIN",
         },
         select: {
           id: true,
           email: true,
           username: true,
-          firstName: true,
-          lastName: true,
+          role: true,
+          isActive: true,
           createdAt: true,
         },
       });
 
-      // Auto-login: generate JWT on signup
-      const token = generateToken({
-        id: user.id,
-        type: "customer",
-      });
-
       return res.status(201).json({
-        message: "Account created successfully.",
+        message: "Admin created successfully.",
         success: true,
-        data: user,
-        token,
+        data: admin,
       });
     } catch (err) {
-      console.error("Customer signup error:", err);
+      console.error("Admin signup error:", err);
       return res.status(500).json({
         message: "Server error.",
         success: false,

@@ -65,7 +65,6 @@ router.post(
         },
       });
 
-      // Admin email
       try {
         await transporter.sendMail({
           from: process.env.SMTP_USER,
@@ -84,7 +83,6 @@ ${message}
         console.error("Admin email failed:", err);
       }
 
-      // Customer email
       try {
         if (email) {
           await transporter.sendMail({
@@ -114,10 +112,7 @@ Anand Jewellery
       });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({
-        success: false,
-        message: "Server error",
-      });
+      return res.status(500).json({ success: false, message: "Server error" });
     }
   },
 );
@@ -131,9 +126,7 @@ router.delete(
     try {
       const { id } = req.params;
 
-      const inquiry = await prisma.contactEnquiry.findUnique({
-        where: { id },
-      });
+      const inquiry = await prisma.contactEnquiry.findUnique({ where: { id } });
 
       if (!inquiry) {
         return res.status(404).json({
@@ -142,9 +135,7 @@ router.delete(
         });
       }
 
-      await prisma.contactEnquiry.delete({
-        where: { id },
-      });
+      await prisma.contactEnquiry.delete({ where: { id } });
 
       return res.json({
         success: true,
@@ -152,10 +143,7 @@ router.delete(
       });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({
-        success: false,
-        message: "Server error",
-      });
+      return res.status(500).json({ success: false, message: "Server error" });
     }
   },
 );
@@ -195,10 +183,7 @@ router.put(
       });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({
-        success: false,
-        message: "Server error",
-      });
+      return res.status(500).json({ success: false, message: "Server error" });
     }
   },
 );

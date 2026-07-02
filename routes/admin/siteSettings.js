@@ -3,7 +3,6 @@ const router = express.Router();
 const prisma = require("../../config/prisma");
 const authMiddleware = require("../../middleware/authMiddleware");
 
-// GET /api/admin/site-settings
 router.get("/", async (req, res) => {
   try {
     const settings = await prisma.siteSetting.findMany();
@@ -12,7 +11,6 @@ router.get("/", async (req, res) => {
       config[s.key] = s.value;
     });
 
-    // Provide default values for required frontend fields
     const defaultSettings = {
       id: "main",
       address: config.address || "",
@@ -31,13 +29,18 @@ router.get("/", async (req, res) => {
   }
 });
 
-// PUT /api/admin/site-settings
 router.put("/", authMiddleware, async (req, res) => {
   try {
     const data = req.body;
-    const keys = ["address", "maps_url", "email", "phone", "facebook_url", "instagram_url"];
-    
-    // Use transaction for multiple upserts
+    const keys = [
+      "address",
+      "maps_url",
+      "email",
+      "phone",
+      "facebook_url",
+      "instagram_url",
+    ];
+
     await prisma.$transaction(
       keys.map((key) => {
         return prisma.siteSetting.upsert({
@@ -45,10 +48,13 @@ router.put("/", authMiddleware, async (req, res) => {
           update: { value: data[key] || "" },
           create: { key, value: data[key] || "" },
         });
-      })
+      }),
     );
 
-    return res.json({ success: true, message: "Settings updated successfully." });
+    return res.json({
+      success: true,
+      message: "Settings updated successfully.",
+    });
   } catch (error) {
     console.error("Update site settings error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
