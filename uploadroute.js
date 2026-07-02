@@ -64,7 +64,10 @@ router.post(
         .json({ success: false, message: "No image file provided." });
     }
     const API_URL =
-      process.env.API_URL || `http://localhost:${process.env.PORT || 5000}`;
+      process.env.API_URL ||
+      (process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : `http://localhost:${process.env.PORT || 5000}`);
     const url = `${API_URL}/uploads/products-image/${req.file.filename}`;
     return res.json({ success: true, data: { url } });
   },
