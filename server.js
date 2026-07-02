@@ -12,7 +12,7 @@ const { fetchAndStoreMetalRates } = require("./services/metalRatesFetcher");
 
 const isVercel = Boolean(process.env.VERCEL);
 
-if (!isVercel) {
+if (require.main === module && !isVercel) {
   startMetalRateScheduler();
 
   // Fetch immediately on startup so the DB is never empty on first run.
