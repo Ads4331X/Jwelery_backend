@@ -10,11 +10,19 @@
     "multer": "^2.2.0",
     "node-cron": "^4.5.0",
     "node-fetch": "^2.7.0",
-    "nodemailer": "^9.0.1",
-    "prisma": "^6.19.3"
+    "nodemailer": "^9.0.1"
   },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.3"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "prisma@6.19.3": true,
+    "bcrypt@6.0.0": true
   }
 }

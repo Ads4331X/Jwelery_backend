@@ -1,0 +1,80 @@
+const express = require("express");
+const router = express.Router();
+const bcrypt = require("bcrypt");
+const { body, validationResult } = require("express-validator");
+
+const prisma = require("../../config/prisma");
+const authMiddleware = require("../../middleware/authMiddleware");
+
+// POST /api/customer/change-password — requires a logged-in customer.
+// Unlike forgot-password, this trusts the session (JWT) and just asks
+// for the current password to confirm it's really them.
+router.post(
+  "/",
+  authMiddleware,
+  [
+    body("currentPassword")
+      .notEmpty()
+      .withMessage("Current password is required."),
+    body("newPassword")
+      .isLength({ min: 6 })
+      .withMessage("New password must be at least 6 characters."),
+  ],
+  async (req, res) => {
+    try {
+      if (req.user.type !== "customer") {
+        return res.status(403).json({ success: false, message: "Forbidden." });
+      }
+
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: "Validation failed.",
+          errors: errors.array(),
+        });
+      }
+
+      const { currentPassword, newPassword } = req.body;
+
+      const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (!user) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Account not found." });
+      }
+
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) {
+        return res.status(401).json({
+          success: false,
+          message: "Current password is incorrect.",
+        });
+      }
+
+      const sameAsOld = await bcrypt.compare(newPassword, user.password);
+      if (sameAsOld) {
+        return res.status(400).json({
+          success: false,
+          message: "New password must be different from the current password.",
+        });
+      }
+
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { password: hashedPassword },
+      });
+
+      return res.json({
+        success: true,
+        message: "Password updated successfully.",
+      });
+    } catch (err) {
+      console.error("Change-password error:", err);
+      return res.status(500).json({ success: false, message: "Server error." });
+    }
+  },
+);
+
+module.exports = router;

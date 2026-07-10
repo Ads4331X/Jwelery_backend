@@ -27,6 +27,8 @@ const adminRole = require("./routes/admin/role");
 const adminAccounts = require("./routes/admin/accounts");
 const adminMetalRates = require("./routes/admin/metalRates");
 const adminSiteSettings = require("./routes/admin/siteSettings");
+const adminForgotPassword = require("./routes/admin/forgotPassword");
+const adminChangePassword = require("./routes/admin/changePassword");
 
 app.use("/api/admin/auth", adminAuth);
 app.use("/api/admin/signup", adminSignup);
@@ -34,11 +36,17 @@ app.use("/api/admin/role", adminRole);
 app.use("/api/admin/accounts", adminAccounts);
 app.use("/api/admin/metal-rates", adminMetalRates);
 app.use("/api/admin/site-settings", adminSiteSettings);
+app.use("/api/admin/forgot-password", adminForgotPassword);
+app.use("/api/admin/change-password", adminChangePassword);
 
 const customerAuth = require("./routes/customer/auth");
 const customerSignup = require("./routes/customer/signup");
+const customerForgotPassword = require("./routes/customer/forgotPassword");
+const customerChangePassword = require("./routes/customer/changePassword");
 app.use("/api/customer/auth", customerAuth);
 app.use("/api/customer/signup", customerSignup);
+app.use("/api/customer/forgot-password", customerForgotPassword);
+app.use("/api/customer/change-password", customerChangePassword);
 
 const inquiry = require("./routes/inquery/index");
 app.use("/api/inquiry", inquiry);

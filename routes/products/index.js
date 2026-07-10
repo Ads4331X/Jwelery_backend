@@ -5,7 +5,9 @@ const authMiddleware = require("../../middleware/authMiddleware");
 const { body, validationResult } = require("express-validator");
 const requireRole = require("../../middleware/roleMiddleware");
 
-const formatProduct = (product) => ({
+const formatProduct = (product, rateMap = {}) => ({
+  // computedPrice is derived from MetalRate (latest by metalType) + product pricing components
+
   id: product.id,
   name: product.name,
   slug: product.slug || "",
@@ -19,6 +21,7 @@ const formatProduct = (product) => ({
   makingChargeType: product.makingChargeType,
   wastagePercent: product.wastagePercent,
   vatPercent: product.vatPercent,
+  computedPrice: computePrice(product, rateMap),
   stock: product.stock,
   isFeatured: product.isFeatured,
   isDealOfDay: product.isDealOfDay,
@@ -109,13 +112,15 @@ const handleErrors = (req, res, next) => {
 
 router.get("/", async (req, res) => {
   try {
+    const rateMap = await getLatestMetalRates();
+
     const products = await prisma.product.findMany({
       orderBy: { createdAt: "asc" },
       include: { images: true, category: true },
     });
     return res.json({
       success: true,
-      data: products.map(formatProduct),
+      data: products.map((p) => formatProduct(p, rateMap)),
     });
   } catch (error) {
     console.error(error);
@@ -148,9 +153,11 @@ router.post(
         include: { images: true, category: true },
       });
 
+      const rateMap = await getLatestMetalRates();
+
       return res.json({
         success: true,
-        data: formatProduct(product),
+        data: formatProduct(product, rateMap),
       });
     } catch (error) {
       console.error(error);
@@ -233,12 +240,57 @@ router.put(
         include: { images: true, category: true },
       });
 
-      return res.json({ success: true, data: formatProduct(product) });
+      const rateMap = await getLatestMetalRates();
+
+      return res.json({ success: true, data: formatProduct(product, rateMap) });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ success: false, message: "Server error" });
     }
   },
 );
+
+// ── Fetch the latest published rate for each metal type ──
+const getLatestMetalRates = async () => {
+  const rates = await prisma.metalRate.findMany({
+    orderBy: { createdAt: "desc" },
+  });
+
+  // Since we iterate in DESC order, the first time we see a metalType
+  // it is already the latest for that metal.
+  const latestByType = {};
+  for (const r of rates) {
+    const key = String(r.metalType ?? "").toUpperCase();
+    if (!key) continue;
+    if (!latestByType[key]) latestByType[key] = r;
+  }
+
+  return latestByType; // { GOLD: {...}, SILVER: {...}, ... }
+};
+
+// ── Apply the pricing formula from the schema comment ──
+const computePrice = (product, rateMap) => {
+  const rateKey = String(product.metalType ?? "").toUpperCase();
+  const rate = rateMap[rateKey];
+  if (!rate) return null; // no rate published yet for this metal → stays "Price on request"
+
+  const ratePerGram = Number(rate.ratePerGram);
+  const weight = Number(product.weightGrams);
+  const wastagePercent = Number(product.wastagePercent);
+  const vatPercent = Number(product.vatPercent);
+  const makingCharge = Number(product.makingCharge);
+
+  const metalCost = ratePerGram * weight;
+  const wastageAmt = metalCost * (wastagePercent / 100);
+  const makingAmt =
+    product.makingChargeType === "PERCENTAGE"
+      ? metalCost * (makingCharge / 100)
+      : makingCharge;
+
+  const subtotal = metalCost + wastageAmt + makingAmt;
+  const vatAmt = subtotal * (vatPercent / 100);
+
+  return Math.round((subtotal + vatAmt) * 100) / 100; // round to 2dp
+};
 
 module.exports = router;

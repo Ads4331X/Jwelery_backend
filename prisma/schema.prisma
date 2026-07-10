@@ -68,6 +68,18 @@ enum EnquiryStatus {
   REPLIED
 }
 
+enum OtpPurpose {
+  PASSWORD_RESET
+  SIGNUP_VERIFICATION
+}
+
+// Which table an OTP code belongs to — lets one OtpCode model serve
+// both customer (User) and Admin password resets.
+enum OtpAccountType {
+  CUSTOMER
+  ADMIN
+}
+
 // ─────────────────────────────────────────────────────────────
 // ADMIN
 // ─────────────────────────────────────────────────────────────
@@ -425,6 +437,31 @@ model ContactEnquiry {
 
   @@index([status])
   @@map("contact_enquiries")
+}
+
+// ─────────────────────────────────────────────────────────────
+// OTP  (email codes for password reset / signup verification)
+// ─────────────────────────────────────────────────────────────
+
+model OtpCode {
+  id          String         @id @default(cuid())
+  accountId   String         // User.id or Admin.id, depending on accountType
+  accountType OtpAccountType @default(CUSTOMER)
+  codeHash    String         // bcrypt hash of the 6-digit code — never store plaintext
+  purpose     OtpPurpose     @default(PASSWORD_RESET)
+  expiresAt   DateTime
+  consumed    Boolean        @default(false) // set true after successful /verify
+  resetUsedAt DateTime?      // set true exactly once during successful /reset
+  attempts    Int            @default(0) // failed verify attempts against this code
+  createdAt   DateTime       @default(now())
+
+
+  // No FK relation here on purpose — accountId can point at either the
+  // users or admins table depending on accountType, and Prisma doesn't
+  // support polymorphic relations. Cleanup of stale rows is handled by
+  // expiresAt + a periodic cleanup job, not cascading deletes.
+  @@index([accountId, accountType, purpose, consumed])
+  @@map("otp_codes")
 }
 
 // ─────────────────────────────────────────────────────────────
