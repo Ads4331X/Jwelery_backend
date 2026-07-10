@@ -4,10 +4,9 @@ const prisma = require("../../config/prisma");
 const authMiddleware = require("../../middleware/authMiddleware");
 const { body, validationResult } = require("express-validator");
 const requireRole = require("../../middleware/roleMiddleware");
+const { deleteImageFiles } = require("../../utils/productImages");
 
-const formatProduct = (product, rateMap = {}) => ({
-  // computedPrice is derived from MetalRate (latest by metalType) + product pricing components
-
+const formatProduct = (product) => ({
   id: product.id,
   name: product.name,
   slug: product.slug || "",
@@ -21,7 +20,6 @@ const formatProduct = (product, rateMap = {}) => ({
   makingChargeType: product.makingChargeType,
   wastagePercent: product.wastagePercent,
   vatPercent: product.vatPercent,
-  computedPrice: computePrice(product, rateMap),
   stock: product.stock,
   isFeatured: product.isFeatured,
   isDealOfDay: product.isDealOfDay,
@@ -112,15 +110,13 @@ const handleErrors = (req, res, next) => {
 
 router.get("/", async (req, res) => {
   try {
-    const rateMap = await getLatestMetalRates();
-
     const products = await prisma.product.findMany({
       orderBy: { createdAt: "asc" },
       include: { images: true, category: true },
     });
     return res.json({
       success: true,
-      data: products.map((p) => formatProduct(p, rateMap)),
+      data: products.map(formatProduct),
     });
   } catch (error) {
     console.error(error);
@@ -153,11 +149,9 @@ router.post(
         include: { images: true, category: true },
       });
 
-      const rateMap = await getLatestMetalRates();
-
       return res.json({
         success: true,
-        data: formatProduct(product, rateMap),
+        data: formatProduct(product),
       });
     } catch (error) {
       console.error(error);
@@ -176,7 +170,10 @@ router.delete(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const product = await prisma.product.findUnique({ where: { id } });
+      const product = await prisma.product.findUnique({
+        where: { id },
+        include: { images: true },
+      });
 
       if (!product) {
         return res.status(404).json({
@@ -185,7 +182,11 @@ router.delete(
         });
       }
 
+      // ProductImage rows cascade-delete with the product (schema
+      // onDelete: Cascade), but the actual files on disk don't — clean
+      // those up ourselves once the DB delete succeeds.
       await prisma.product.delete({ where: { id } });
+      deleteImageFiles(product.images.map((img) => img.url));
 
       return res.json({
         success: true,
@@ -208,7 +209,10 @@ router.put(
     try {
       const { id } = req.params;
 
-      const existing = await prisma.product.findUnique({ where: { id } });
+      const existing = await prisma.product.findUnique({
+        where: { id },
+        include: { images: true },
+      });
       if (!existing) {
         return res.status(404).json({
           success: false,
@@ -240,57 +244,23 @@ router.put(
         include: { images: true, category: true },
       });
 
-      const rateMap = await getLatestMetalRates();
+      // Only delete files for images that were actually dropped — anything
+      // still present in the new imageUrls list (e.g. kept across a
+      // reorder) must be left alone.
+      if (imageUrls.length > 0) {
+        const keptUrls = new Set(imageUrls);
+        const removedUrls = existing.images
+          .map((img) => img.url)
+          .filter((url) => !keptUrls.has(url));
+        deleteImageFiles(removedUrls);
+      }
 
-      return res.json({ success: true, data: formatProduct(product, rateMap) });
+      return res.json({ success: true, data: formatProduct(product) });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ success: false, message: "Server error" });
     }
   },
 );
-
-// ── Fetch the latest published rate for each metal type ──
-const getLatestMetalRates = async () => {
-  const rates = await prisma.metalRate.findMany({
-    orderBy: { createdAt: "desc" },
-  });
-
-  // Since we iterate in DESC order, the first time we see a metalType
-  // it is already the latest for that metal.
-  const latestByType = {};
-  for (const r of rates) {
-    const key = String(r.metalType ?? "").toUpperCase();
-    if (!key) continue;
-    if (!latestByType[key]) latestByType[key] = r;
-  }
-
-  return latestByType; // { GOLD: {...}, SILVER: {...}, ... }
-};
-
-// ── Apply the pricing formula from the schema comment ──
-const computePrice = (product, rateMap) => {
-  const rateKey = String(product.metalType ?? "").toUpperCase();
-  const rate = rateMap[rateKey];
-  if (!rate) return null; // no rate published yet for this metal → stays "Price on request"
-
-  const ratePerGram = Number(rate.ratePerGram);
-  const weight = Number(product.weightGrams);
-  const wastagePercent = Number(product.wastagePercent);
-  const vatPercent = Number(product.vatPercent);
-  const makingCharge = Number(product.makingCharge);
-
-  const metalCost = ratePerGram * weight;
-  const wastageAmt = metalCost * (wastagePercent / 100);
-  const makingAmt =
-    product.makingChargeType === "PERCENTAGE"
-      ? metalCost * (makingCharge / 100)
-      : makingCharge;
-
-  const subtotal = metalCost + wastageAmt + makingAmt;
-  const vatAmt = subtotal * (vatPercent / 100);
-
-  return Math.round((subtotal + vatAmt) * 100) / 100; // round to 2dp
-};
 
 module.exports = router;
