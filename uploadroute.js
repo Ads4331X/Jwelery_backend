@@ -21,10 +21,14 @@ router.use((req, res, next) => {
 });
 
 // ─── Upload directory ─────────────────────────────────────────────────────────
-const UPLOAD_DIR = path.join(__dirname, "uploads", "products-image");
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
+// Vercel serverless filesystem is read-only under /var/task.
+// Only /tmp is writable (but not persistent across deploys).
+const isVercel = Boolean(process.env.VERCEL);
+const UPLOAD_DIR = isVercel
+  ? path.join("/tmp", "uploads", "products-image")
+  : path.join(__dirname, "uploads", "products-image");
+
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // ─── Multer config ────────────────────────────────────────────────────────────
 const storage = multer.diskStorage({
@@ -68,7 +72,9 @@ router.post(
       (process.env.VERCEL_URL
         ? `https://${process.env.VERCEL_URL}`
         : `http://localhost:${process.env.PORT || 5000}`);
-    const url = `${API_URL}/uploads/products-image/${req.file.filename}`;
+    // Keep the API response stable. In production on Vercel these files may
+    // not persist, but this avoids runtime crashes.
+    const url = `${API_URL}/api/uploads/products-image/${req.file.filename}`;
     return res.json({ success: true, data: { url } });
   },
 );
