@@ -185,12 +185,17 @@ router.delete(
       // ProductImage rows cascade-delete with the product (schema
       // onDelete: Cascade), but the actual files on disk don't — clean
       // those up ourselves once the DB delete succeeds.
-      await prisma.product.delete({ where: { id } });
-      deleteImageFiles(product.images.map((img) => img.url));
+      //
+      // Soft-delete to preserve order history (OrderItem → Product has FK)
+      // and avoid FK violations/crashes.
+      await prisma.product.update({
+        where: { id },
+        data: { isActive: false },
+      });
 
       return res.json({
         success: true,
-        message: "Product deleted successfully",
+        message: "Product disabled successfully",
       });
     } catch (error) {
       console.error(error);

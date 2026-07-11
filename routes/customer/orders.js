@@ -159,6 +159,7 @@ router.post(
           wastagePercent: true,
           vatPercent: true,
           isActive: true,
+          stock: true,
         },
       });
 
@@ -170,6 +171,13 @@ router.post(
           return res.status(400).json({
             success: false,
             message: `Item failed: productId=${item.productId} is invalid or inactive`,
+          });
+        }
+
+        if (Number(p.stock ?? 0) < item.qty) {
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient stock for "${p.name}". Available: ${p.stock}`,
           });
         }
       }
@@ -225,6 +233,7 @@ router.post(
           makingCharge: breakdown.makingCharge,
           wastageCharge: breakdown.wastageCharge,
           vatPercent: Number(product.vatPercent ?? 13),
+          vatAmountPerUnit: breakdown.vatAmount,
           unitPrice: breakdown.totalAmount,
           quantity: qty,
           totalPrice,
@@ -256,6 +265,39 @@ router.post(
       };
 
       const created = await prisma.$transaction(async (tx) => {
+        // Clear cart first (order success leaves no cart residue)
+        await tx.cartItem.deleteMany({
+          where: { cart: { userId } },
+        });
+
+        // Final stock enforcement + decrement inside the transaction.
+        // (Protects against race conditions / stale stock.)
+        for (const it of orderItemsComputed) {
+          const p = await tx.product.findUnique({
+            where: { id: it.productId },
+            select: { stock: true, isActive: true },
+          });
+
+          if (!p || !p.isActive) {
+            throw Object.assign(new Error("Product invalid/inactive"), {
+              status: 400,
+              expose: true,
+            });
+          }
+
+          if (Number(p.stock ?? 0) < it.quantity) {
+            throw Object.assign(new Error("Insufficient stock"), {
+              status: 400,
+              expose: true,
+            });
+          }
+
+          await tx.product.update({
+            where: { id: it.productId },
+            data: { stock: { decrement: it.quantity } },
+          });
+        }
+
         const createdAddress = await tx.address.create({ data: addressRow });
 
         const order = await tx.order.create({
@@ -290,12 +332,10 @@ router.post(
               ) / 100,
             vatAmount:
               Math.round(
-                orderItemsComputed.reduce((s, it) => {
-                  const vatPerUnit =
-                    it.unitPrice -
-                    it.unitPrice / (1 + Number(it.vatPercent ?? 13) / 100);
-                  return s + vatPerUnit * it.quantity;
-                }, 0) * 100,
+                orderItemsComputed.reduce(
+                  (s, it) => s + it.vatAmountPerUnit * it.quantity,
+                  0,
+                ) * 100,
               ) / 100,
             totalAmount,
             metalRateSnapshot,
@@ -370,7 +410,9 @@ router.post(
       });
     } catch (error) {
       console.error("Create order error:", error);
-      return res.status(500).json({ success: false, message: "Server error" });
+      const status = error?.status || 500;
+      const message = error?.expose ? error.message : "Server error";
+      return res.status(status).json({ success: false, message });
     }
   },
 );
