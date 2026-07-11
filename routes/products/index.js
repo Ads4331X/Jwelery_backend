@@ -6,7 +6,7 @@ const { body, validationResult } = require("express-validator");
 const requireRole = require("../../middleware/roleMiddleware");
 const { deleteImageFiles } = require("../../utils/productImages");
 
-const formatProduct = (product) => ({
+const formatProduct = (product, computedPrice) => ({
   id: product.id,
   name: product.name,
   slug: product.slug || "",
@@ -26,6 +26,8 @@ const formatProduct = (product) => ({
   isActive: product.isActive,
   sortOrder: product.sortOrder,
   images: product.images || [],
+  // FRONTEND expects computedPrice to decide between price vs request.
+  computedPrice: computedPrice ?? null,
   createdAt: product.createdAt,
   updatedAt: product.updatedAt,
 });
@@ -108,15 +110,71 @@ const handleErrors = (req, res, next) => {
   next();
 };
 
+const computeComputedPrice = ({ product, ratePerGram }) => {
+  const weightGrams = Number(product.weightGrams);
+  const wastagePercent = Number(product.wastagePercent ?? 0);
+  const vatPercent = Number(product.vatPercent ?? 13);
+  const makingCharge = Number(product.makingCharge);
+  const makingChargeType = product.makingChargeType;
+
+  const metalCost = Number(ratePerGram) * weightGrams;
+  const wastageCharge = metalCost * (wastagePercent / 100);
+
+  let makingChargeComputed;
+  if (makingChargeType === "PERCENTAGE") {
+    makingChargeComputed = metalCost * (makingCharge / 100);
+  } else {
+    // FIXED
+    makingChargeComputed = makingCharge;
+  }
+
+  const subtotal = metalCost + wastageCharge + makingChargeComputed;
+  const vatAmount = subtotal * (vatPercent / 100);
+  const total = subtotal + vatAmount;
+
+  // Round to 2 decimals (matches checkout logic)
+  const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+  return round2(total);
+};
+
 router.get("/", async (req, res) => {
   try {
     const products = await prisma.product.findMany({
       orderBy: { createdAt: "asc" },
       include: { images: true, category: true },
     });
+
+    // Latest rates per metal type (GOLD/SILVER/etc.)
+    const metalTypes = Array.from(new Set(products.map((p) => p.metalType)));
+    const latestRates = await Promise.all(
+      metalTypes.map(async (mt) => {
+        const r = await prisma.metalRate.findFirst({
+          where: { metalType: mt },
+          orderBy: { createdAt: "desc" },
+          select: { metalType: true, ratePerGram: true },
+        });
+        return r;
+      }),
+    );
+
+    const ratesByType = new Map(
+      latestRates
+        .filter(Boolean)
+        .map((r) => [r.metalType, Number(r.ratePerGram)]),
+    );
+
+    const data = products.map((p) => {
+      const ratePerGram = ratesByType.get(p.metalType);
+      const computedPrice =
+        ratePerGram == null
+          ? null
+          : computeComputedPrice({ product: p, ratePerGram });
+      return formatProduct(p, computedPrice);
+    });
+
     return res.json({
       success: true,
-      data: products.map(formatProduct),
+      data,
     });
   } catch (error) {
     console.error(error);
