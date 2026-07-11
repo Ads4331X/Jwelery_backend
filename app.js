@@ -43,10 +43,12 @@ const customerAuth = require("./routes/customer/auth");
 const customerSignup = require("./routes/customer/signup");
 const customerForgotPassword = require("./routes/customer/forgotPassword");
 const customerChangePassword = require("./routes/customer/changePassword");
+const customerUpdateProfile = require("./routes/customer/updateProfile");
 app.use("/api/customer/auth", customerAuth);
 app.use("/api/customer/signup", customerSignup);
 app.use("/api/customer/forgot-password", customerForgotPassword);
 app.use("/api/customer/change-password", customerChangePassword);
+app.use("/api/customer/profile", customerUpdateProfile);
 
 const inquiry = require("./routes/inquery/index");
 app.use("/api/inquiry", inquiry);
