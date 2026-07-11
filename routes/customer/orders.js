@@ -2,6 +2,10 @@ const express = require("express");
 const prisma = require("../../config/prisma");
 const authMiddleware = require("../../middleware/authMiddleware");
 const { body, validationResult } = require("express-validator");
+const {
+  sendOrderConfirmationEmail,
+  sendAdminNewOrderEmail,
+} = require("../../utils/orderEmails");
 
 const router = express.Router();
 
@@ -318,6 +322,42 @@ router.post(
 
         return order;
       });
+
+      // Fire-and-forget emails (must not block response)
+      try {
+        const customer = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { id: true, email: true, firstName: true, phone: true },
+        });
+
+        const orderForEmail = {
+          ...created,
+          items: orderItemsComputed.map((it) => ({
+            productId: it.productId,
+            productName: it.productName,
+            metalType: it.metalType,
+            weightGrams: it.weightGrams,
+            unitPrice: it.unitPrice,
+            quantity: it.quantity,
+            totalPrice: it.totalPrice,
+          })),
+        };
+
+        // Wrap in try/catch regardless; email functions themselves also catch.
+        try {
+          sendOrderConfirmationEmail(orderForEmail, customer);
+        } catch (e) {
+          console.error("Order confirmation email call failed:", e);
+        }
+
+        try {
+          sendAdminNewOrderEmail(orderForEmail, customer);
+        } catch (e) {
+          console.error("Admin new order email call failed:", e);
+        }
+      } catch (e) {
+        console.error("Order email prep failed:", e);
+      }
 
       return res.status(201).json({
         success: true,
