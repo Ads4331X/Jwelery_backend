@@ -44,11 +44,13 @@ const customerSignup = require("./routes/customer/signup");
 const customerForgotPassword = require("./routes/customer/forgotPassword");
 const customerChangePassword = require("./routes/customer/changePassword");
 const customerUpdateProfile = require("./routes/customer/updateProfile");
+const customerAddresses = require("./routes/customer/addresses");
 app.use("/api/customer/auth", customerAuth);
 app.use("/api/customer/signup", customerSignup);
 app.use("/api/customer/forgot-password", customerForgotPassword);
 app.use("/api/customer/change-password", customerChangePassword);
 app.use("/api/customer/profile", customerUpdateProfile);
+app.use("/api/customer/addresses", customerAddresses);
 
 const inquiry = require("./routes/inquery/index");
 app.use("/api/inquiry", inquiry);
