@@ -111,9 +111,11 @@ model User {
   lastName  String?
   phone     String?
   isActive    Boolean   @default(true)
+  emailVerified Boolean  @default(false)
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
 
   // Relations
   addresses Address[]
