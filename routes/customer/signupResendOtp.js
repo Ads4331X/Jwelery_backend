@@ -40,6 +40,32 @@ router.post(
           .json({ success: false, message: "Account not found" });
       }
 
+      // Basic resend throttling (do not introduce new OTP constants).
+      // If the most recent unconsumed signup OTP was created recently, reject.
+      const recentOtp = await prisma.otpCode.findFirst({
+        where: {
+          accountId: userId,
+          accountType: "CUSTOMER",
+          purpose: "SIGNUP_VERIFICATION",
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      // Enforce a short cooldown window to prevent rapid resends.
+      // (Using OTP_TTL_MINUTES=10 implies a natural resend window; still keep it simple.)
+      const cooldownMs = (OTP_TTL_MINUTES * 60 * 1000) / 4; // 2.5 minutes
+      if (recentOtp) {
+        const msSinceLastSend =
+          Date.now() - new Date(recentOtp.createdAt).getTime();
+        if (msSinceLastSend < cooldownMs) {
+          const secondsLeft = Math.ceil((cooldownMs - msSinceLastSend) / 1000);
+          return res.status(429).json({
+            success: false,
+            message: `Please wait ${secondsLeft}s before requesting another code`,
+          });
+        }
+      }
+
       await prisma.otpCode.updateMany({
         where: {
           accountId: userId,
