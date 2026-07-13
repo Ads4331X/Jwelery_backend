@@ -45,8 +45,13 @@ const customerForgotPassword = require("./routes/customer/forgotPassword");
 const customerChangePassword = require("./routes/customer/changePassword");
 const customerUpdateProfile = require("./routes/customer/updateProfile");
 const customerAddresses = require("./routes/customer/addresses");
+const customerSignupVerify = require("./routes/customer/signupVerify");
+const customerSignupResendOtp = require("./routes/customer/signupResendOtp");
+
 app.use("/api/customer/auth", customerAuth);
 app.use("/api/customer/signup", customerSignup);
+app.use("/api/customer/signup", customerSignupVerify);
+app.use("/api/customer/signup", customerSignupResendOtp);
 app.use("/api/customer/forgot-password", customerForgotPassword);
 app.use("/api/customer/change-password", customerChangePassword);
 app.use("/api/customer/profile", customerUpdateProfile);

@@ -3,7 +3,9 @@ const router = express.Router();
 const bcrypt = require("bcrypt");
 const { body, validationResult } = require("express-validator");
 const prisma = require("../../config/prisma");
-const generateToken = require("../../utils/generateToken");
+
+const transporter = require("../../utils/transporter");
+const { generateOtp, hashOtp, otpExpiry } = require("../../utils/otp");
 
 const saltRounds = 10;
 
@@ -53,6 +55,7 @@ router.post(
           lastName: lastName || null,
           username: username || null,
           phone: phone || null,
+          emailVerified: false,
         },
         select: {
           id: true,
@@ -64,16 +67,34 @@ router.post(
         },
       });
 
-      const token = generateToken({
-        id: user.id,
-        type: "customer",
+      // Generate OTP for signup verification.
+      const code = generateOtp();
+      const codeHash = await hashOtp(code);
+      const expiresAt = otpExpiry();
+
+      await prisma.otpCode.create({
+        data: {
+          accountId: user.id,
+          accountType: "CUSTOMER",
+          purpose: "SIGNUP_VERIFICATION",
+          codeHash,
+          expiresAt,
+        },
+      });
+
+      // Send verification email (reuse existing transporter).
+      const greetingName = user.firstName || user.username || "";
+      await transporter.sendMail({
+        from: process.env.SMTP_USER,
+        to: user.email,
+        subject: `Your signup verification code — Anand Jewellers`,
+        text: `Hello${greetingName ? " " + greetingName : ""},\n\nYour signup verification code is: ${code}\n\nThis code is valid for 10 minutes. If you didn't request this, you can safely ignore this email.\n\nRegards,\nAnand Jewellers`,
       });
 
       return res.status(201).json({
-        message: "Account created successfully.",
         success: true,
-        data: user,
-        token,
+        data: { userId: user.id, email: user.email },
+        requiresVerification: true,
       });
     } catch (err) {
       console.error("Customer signup error:", err);
