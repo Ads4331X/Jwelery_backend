@@ -32,13 +32,58 @@ async function resolveStoreEmail() {
   return (process.env.SMTP_USER || "").trim();
 }
 
+async function formatItemsForHtml(order) {
+  if (!order?.items || !Array.isArray(order.items)) return "";
+
+  let html = `<table style="width:100%; border-collapse:collapse; margin-top:10px; margin-bottom:10px;">`;
+  html += `<thead><tr><th style="text-align:left; padding:5px; border-bottom:1px solid #ddd;">Image</th><th style="text-align:left; padding:5px; border-bottom:1px solid #ddd;">Product</th><th style="text-align:left; padding:5px; border-bottom:1px solid #ddd;">Qty</th><th style="text-align:left; padding:5px; border-bottom:1px solid #ddd;">Unit Price</th><th style="text-align:left; padding:5px; border-bottom:1px solid #ddd;">Total</th></tr></thead><tbody>`;
+
+  for (const it of order.items) {
+    const name = it.productName || it.productId || "Item";
+    const qty = it.quantity ?? 0;
+    const unit = it.unitPrice ?? 0;
+    const lineTotal = it.totalPrice ?? unit * qty;
+
+    let imgHtml = "";
+    if (it.productId) {
+      try {
+        let img = await prisma.productImage.findFirst({
+          where: { productId: it.productId, isPrimary: true }
+        });
+        if (!img) {
+          img = await prisma.productImage.findFirst({
+            where: { productId: it.productId },
+            orderBy: { sortOrder: 'asc' }
+          });
+        }
+        if (img && img.url) {
+          imgHtml = `<img src="${img.url}" alt="${name}" style="width:60px;height:60px;object-fit:cover;" />`;
+        }
+      } catch (e) {
+        console.error("Error fetching product image for email:", e);
+      }
+    }
+
+    html += `<tr>`;
+    html += `<td style="padding:5px; border-bottom:1px solid #eee;">${imgHtml}</td>`;
+    html += `<td style="padding:5px; border-bottom:1px solid #eee;">${name}</td>`;
+    html += `<td style="padding:5px; border-bottom:1px solid #eee;">${qty}</td>`;
+    html += `<td style="padding:5px; border-bottom:1px solid #eee;">${unit}</td>`;
+    html += `<td style="padding:5px; border-bottom:1px solid #eee;">${lineTotal}</td>`;
+    html += `</tr>`;
+  }
+
+  html += `</tbody></table>`;
+  return html;
+}
+
 async function sendOrderConfirmationEmail(order, customer) {
   try {
     const to = customer?.email;
     if (!to) return;
 
     const subject = `Order Confirmed — ${order.orderNumber}`;
-    const body =
+    const textBody =
       `Hello${customer?.firstName ? " " + customer.firstName : ""},\n\n` +
       `Thanks for your order! Your order has been confirmed.\n\n` +
       `Order Number: ${order.orderNumber}\n\n` +
@@ -47,11 +92,24 @@ async function sendOrderConfirmationEmail(order, customer) {
       `Status: Pending\n\n` +
       `Regards,\nAnand Jewellers`;
 
+    const itemsHtml = await formatItemsForHtml(order);
+    
+    const htmlBody = 
+      `<p>Hello${customer?.firstName ? " " + customer.firstName : ""},</p>` +
+      `<p>Thanks for your order! Your order has been confirmed.</p>` +
+      `<p><b>Order Number:</b> ${order.orderNumber}</p>` +
+      `<p><b>Items:</b></p>` +
+      `${itemsHtml || "-"}` +
+      `<p><b>Total:</b> ${order.totalAmount}</p>` +
+      `<p><b>Status:</b> Pending</p>` +
+      `<p>Regards,<br>Anand Jewellers</p>`;
+
     await transporter.sendMail({
       from: process.env.SMTP_USER,
       to,
       subject,
-      text: body,
+      text: textBody,
+      html: htmlBody,
     });
   } catch (err) {
     console.error("sendOrderConfirmationEmail failed:", err);
@@ -69,7 +127,7 @@ async function sendAdminNewOrderEmail(order, customer) {
       ? customer.firstName
       : customer?.username || "";
 
-    const body =
+    const textBody =
       `Hello Admin,\n\n` +
       `A new order has been placed.\n\n` +
       `Order Number: ${order.orderNumber}\n\n` +
@@ -82,11 +140,28 @@ async function sendAdminNewOrderEmail(order, customer) {
       `Payment Method: COD\n\n` +
       `Regards,\nAnand Jewellers`;
 
+    const itemsHtml = await formatItemsForHtml(order);
+
+    const htmlBody =
+      `<p>Hello Admin,</p>` +
+      `<p>A new order has been placed.</p>` +
+      `<p><b>Order Number:</b> ${order.orderNumber}</p>` +
+      `<p><b>Customer Details:</b><br>` +
+      `- Name: ${customerName || ""}<br>` +
+      `- Email: ${customer?.email || ""}<br>` +
+      `- Phone: ${customer?.phone || ""}</p>` +
+      `<p><b>Items:</b></p>` +
+      `${itemsHtml || "-"}` +
+      `<p><b>Total:</b> ${order.totalAmount}</p>` +
+      `<p><b>Payment Method:</b> COD</p>` +
+      `<p>Regards,<br>Anand Jewellers</p>`;
+
     await transporter.sendMail({
       from: process.env.SMTP_USER,
       to: adminEmail,
       subject,
-      text: body,
+      text: textBody,
+      html: htmlBody,
     });
   } catch (err) {
     console.error("sendAdminNewOrderEmail failed:", err);
