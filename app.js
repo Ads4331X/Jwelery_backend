@@ -61,16 +61,21 @@ const inquiry = require("./routes/inquery/index");
 app.use("/api/inquiry", inquiry);
 
 const product = require("./routes/products/index");
+const productReviews = require("./routes/products/reviews");
 const categories = require("./routes/categories/index");
 const customerOrders = require("./routes/customer/orders");
 const adminOrders = require("./routes/admin/orders");
 const adminOrdersStats = require("./routes/admin/ordersStats");
 app.use("/api/products", product);
+app.use("/api/products/:productId/reviews", productReviews);
 
 app.use("/api/categories", categories);
 app.use("/api/customer/orders", customerOrders);
 app.use("/api/admin/orders", adminOrders);
 app.use("/api/admin/orders", adminOrdersStats);
+
+const adminReviews = require("./routes/admin/reviews");
+app.use("/api/admin/reviews", adminReviews);
 
 app.get("/", (req, res) => res.send("Anand Jewellers API — running"));
 

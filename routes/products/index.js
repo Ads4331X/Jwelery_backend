@@ -6,31 +6,41 @@ const { body, validationResult } = require("express-validator");
 const requireRole = require("../../middleware/roleMiddleware");
 const { deleteImageFiles } = require("../../utils/productImages");
 
-const formatProduct = (product, computedPrice) => ({
-  id: product.id,
-  name: product.name,
-  slug: product.slug || "",
-  description: product.description || "",
-  categoryId: product.categoryId,
-  category: product.category,
-  metalType: product.metalType,
-  weightGrams: product.weightGrams,
-  purity: product.purity || null,
-  makingCharge: product.makingCharge,
-  makingChargeType: product.makingChargeType,
-  wastagePercent: product.wastagePercent,
-  vatPercent: product.vatPercent,
-  stock: product.stock,
-  isFeatured: product.isFeatured,
-  isDealOfDay: product.isDealOfDay,
-  isActive: product.isActive,
-  sortOrder: product.sortOrder,
-  images: product.images || [],
-  // FRONTEND expects computedPrice to decide between price vs request.
-  computedPrice: computedPrice ?? null,
-  createdAt: product.createdAt,
-  updatedAt: product.updatedAt,
-});
+const formatProduct = (product, computedPrice) => {
+  const visibleReviews = product.reviews || [];
+  const reviewCount = visibleReviews.length;
+  const avgRating = reviewCount > 0
+    ? visibleReviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount
+    : 0;
+
+  return {
+    id: product.id,
+    name: product.name,
+    slug: product.slug || "",
+    description: product.description || "",
+    categoryId: product.categoryId,
+    category: product.category,
+    metalType: product.metalType,
+    weightGrams: product.weightGrams,
+    purity: product.purity || null,
+    makingCharge: product.makingCharge,
+    makingChargeType: product.makingChargeType,
+    wastagePercent: product.wastagePercent,
+    vatPercent: product.vatPercent,
+    stock: product.stock,
+    isFeatured: product.isFeatured,
+    isDealOfDay: product.isDealOfDay,
+    isActive: product.isActive,
+    sortOrder: product.sortOrder,
+    images: product.images || [],
+    // FRONTEND expects computedPrice to decide between price vs request.
+    computedPrice: computedPrice ?? null,
+    avgRating: Math.round(avgRating * 10) / 10,
+    reviewCount,
+    createdAt: product.createdAt,
+    updatedAt: product.updatedAt,
+  };
+};
 
 // ── Single source of truth for field types ──
 const productValidation = [
@@ -141,7 +151,14 @@ router.get("/", async (req, res) => {
   try {
     const products = await prisma.product.findMany({
       orderBy: { createdAt: "asc" },
-      include: { images: true, category: true },
+      include: { 
+        images: true, 
+        category: true,
+        reviews: {
+          where: { isVisible: true },
+          select: { rating: true }
+        }
+      },
     });
 
     // Latest rates per metal type (GOLD/SILVER/etc.)
