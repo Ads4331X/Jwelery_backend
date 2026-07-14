@@ -264,7 +264,12 @@ router.post(
         isDefault: false,
       };
 
-      const created = await prisma.$transaction(async (tx) => {
+      // Prisma default interactive transaction timeout can be too low for this request.
+      // Split the write work into smaller transactions to avoid 'Transaction already closed'.
+
+      // 1) Clear cart, decrement stock, and create address in separate transaction
+      let created;
+      await prisma.$transaction(async (tx) => {
         // Clear cart first (order success leaves no cart residue)
         await tx.cartItem.deleteMany({
           where: { cart: { userId } },
@@ -299,6 +304,22 @@ router.post(
         }
 
         const createdAddress = await tx.address.create({ data: addressRow });
+
+        // Create order + items in the second smaller transaction.
+        // (We can't return order from here anymore because this transaction is for stock/address only.)
+
+        // Store created address id and then exit transaction.
+        created = { createdAddressId: createdAddress.id };
+
+        return created;
+      });
+
+      // 2) Create order + orderItems in a new transaction (faster)
+      const createdFinal = await prisma.$transaction(async (tx) => {
+        const createdAddress = await tx.address.findUnique({
+          where: { id: created.createdAddressId },
+          select: { id: true },
+        });
 
         const order = await tx.order.create({
           data: {
@@ -371,7 +392,7 @@ router.post(
         });
 
         const orderForEmail = {
-          ...created,
+          ...createdFinal,
           items: orderItemsComputed.map((it) => ({
             productId: it.productId,
             productName: it.productName,
@@ -399,13 +420,16 @@ router.post(
         console.error("Order email prep failed:", e);
       }
 
+      // Ensure consistent response payload
+      const createdOrder = createdFinal;
+
       return res.status(201).json({
         success: true,
         data: {
-          orderNumber: created.orderNumber,
-          id: created.id,
-          totalAmount: created.totalAmount,
-          status: created.status,
+          orderNumber: createdOrder.orderNumber,
+          id: createdOrder.id,
+          totalAmount: createdOrder.totalAmount,
+          status: createdOrder.status,
         },
       });
     } catch (error) {

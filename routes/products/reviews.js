@@ -2,11 +2,21 @@ const express = require("express");
 const router = express.Router({ mergeParams: true });
 const prisma = require("../../config/prisma");
 const authMiddleware = require("../../middleware/authMiddleware");
-const requireRole = require("../../middleware/roleMiddleware");
 const jwt = require("jsonwebtoken");
-const Filter = require('bad-words');
 
-const filter = new Filter();
+let filter;
+try {
+  // bad-words@4 is ESM-only and may crash when required from CommonJS.
+  // Implement profanity check safely: if loading fails, disable it.
+  const Filter = require("bad-words");
+  filter = new Filter();
+} catch (e) {
+  console.warn(
+    "[profanity] bad-words failed to load, disabling profanity filter:",
+    e.message,
+  );
+  filter = null;
+}
 
 const softAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -22,10 +32,10 @@ const softAuth = (req, res, next) => {
 };
 
 const checkProfanity = (req, res, next) => {
-  if (req.body.comment && filter.isProfane(req.body.comment)) {
+  if (filter && req.body.comment && filter.isProfane(req.body.comment)) {
     return res.status(400).json({
       success: false,
-      message: "Your comment contains profanity. Please revise it."
+      message: "Your comment contains profanity. Please revise it.",
     });
   }
   next();
@@ -42,7 +52,9 @@ router.get("/", softAuth, async (req, res) => {
     const [reviews, totalCount] = await Promise.all([
       prisma.review.findMany({
         where: { productId, isVisible: true },
-        include: { user: { select: { firstName: true, lastName: true, username: true } } },
+        include: {
+          user: { select: { firstName: true, lastName: true, username: true } },
+        },
         orderBy: { createdAt: "desc" },
         skip,
         take: limit,
@@ -53,15 +65,15 @@ router.get("/", softAuth, async (req, res) => {
     const stats = await prisma.review.aggregate({
       where: { productId, isVisible: true },
       _avg: { rating: true },
-      _count: { rating: true }
+      _count: { rating: true },
     });
 
     let canReview = false;
-    if (req.user && req.user.type === "CUSTOMER") {
+    if (req.user && req.user.type === "customer") {
       const userId = req.user.id;
       // Has already reviewed?
       const existingReview = await prisma.review.findUnique({
-        where: { userId_productId: { userId, productId } }
+        where: { userId_productId: { userId, productId } },
       });
       if (!existingReview) {
         // Has a DELIVERED order for this product?
@@ -70,9 +82,9 @@ router.get("/", softAuth, async (req, res) => {
             productId,
             order: {
               userId,
-              status: "DELIVERED"
-            }
-          }
+              status: "DELIVERED",
+            },
+          },
         });
         canReview = orderCount > 0;
       }
@@ -87,8 +99,8 @@ router.get("/", softAuth, async (req, res) => {
         totalPages: Math.ceil(totalCount / limit),
         avgRating: stats._avg.rating || 0,
         reviewCount: stats._count.rating || 0,
-        canReview
-      }
+        canReview,
+      },
     });
   } catch (error) {
     console.error(error);
@@ -103,8 +115,10 @@ router.post("/", authMiddleware, checkProfanity, async (req, res) => {
     const userId = req.user.id;
     const { rating, comment } = req.body;
 
-    if (req.user.type !== "CUSTOMER") {
-       return res.status(403).json({ success: false, message: "Admins cannot review products." });
+    if (req.user.type !== "customer") {
+      return res
+        .status(403)
+        .json({ success: false, message: "Admins cannot review products." });
     }
 
     const orderCount = await prisma.orderItem.count({
@@ -112,15 +126,15 @@ router.post("/", authMiddleware, checkProfanity, async (req, res) => {
         productId,
         order: {
           userId,
-          status: "DELIVERED"
-        }
-      }
+          status: "DELIVERED",
+        },
+      },
     });
 
     if (orderCount === 0) {
       return res.status(403).json({
         success: false,
-        message: "You can only review products you've purchased and received."
+        message: "You can only review products you've purchased and received.",
       });
     }
 
@@ -129,15 +143,20 @@ router.post("/", authMiddleware, checkProfanity, async (req, res) => {
         userId,
         productId,
         rating: parseInt(rating),
-        comment
+        comment,
       },
-      include: { user: { select: { firstName: true, lastName: true, username: true } } },
+      include: {
+        user: { select: { firstName: true, lastName: true, username: true } },
+      },
     });
 
     return res.json({ success: true, data: review });
   } catch (error) {
-    if (error.code === 'P2002') {
-      return res.status(400).json({ success: false, message: "You've already reviewed this product." });
+    if (error.code === "P2002") {
+      return res.status(400).json({
+        success: false,
+        message: "You've already reviewed this product.",
+      });
     }
     console.error(error);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -153,19 +172,26 @@ router.put("/:id", authMiddleware, checkProfanity, async (req, res) => {
 
     const existing = await prisma.review.findUnique({ where: { id } });
     if (!existing) {
-      return res.status(404).json({ success: false, message: "Review not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Review not found." });
     }
     if (existing.userId !== userId) {
-      return res.status(403).json({ success: false, message: "You can only edit your own reviews." });
+      return res.status(403).json({
+        success: false,
+        message: "You can only edit your own reviews.",
+      });
     }
 
     const review = await prisma.review.update({
       where: { id },
       data: {
         rating: rating !== undefined ? parseInt(rating) : undefined,
-        comment: comment !== undefined ? comment : undefined
+        comment: comment !== undefined ? comment : undefined,
       },
-      include: { user: { select: { firstName: true, lastName: true, username: true } } },
+      include: {
+        user: { select: { firstName: true, lastName: true, username: true } },
+      },
     });
 
     return res.json({ success: true, data: review });
@@ -183,17 +209,28 @@ router.delete("/:id", authMiddleware, async (req, res) => {
 
     const existing = await prisma.review.findUnique({ where: { id } });
     if (!existing) {
-      return res.status(404).json({ success: false, message: "Review not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Review not found." });
     }
 
-    if (req.user.role) {
-      if (req.user.role === "DELIVERY_STAFF") {
-        return res.status(403).json({ success: false, message: "Delivery staff cannot delete reviews." });
+    if (req.user.type === "customer") {
+      if (existing.userId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only delete your own reviews.",
+        });
+      }
+    } else if (req.user.type === "admin") {
+      const allowedRoles = ["SUPER_ADMIN", "ADMIN"];
+      if (!allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: Insufficient privileges.",
+        });
       }
     } else {
-      if (existing.userId !== userId) {
-        return res.status(403).json({ success: false, message: "You can only delete your own reviews." });
-      }
+      return res.status(403).json({ success: false, message: "Forbidden." });
     }
 
     await prisma.review.delete({ where: { id } });
