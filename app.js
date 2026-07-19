@@ -74,6 +74,9 @@ app.use("/api/customer/orders", customerOrders);
 app.use("/api/admin/orders", adminOrders);
 app.use("/api/admin/orders", adminOrdersStats);
 
+const esewaRoutes = require("./routes/esewa");
+app.use("/esewa", esewaRoutes);
+
 const adminReviews = require("./routes/admin/reviews");
 app.use("/api/admin/reviews", adminReviews);
 
