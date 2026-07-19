@@ -2,10 +2,11 @@ const express = require("express");
 const path = require("path");
 const app = require("./app");
 
-// Uploads folder + metal-rate scheduler only make sense on a real,
-// persistent server — NOT on Vercel serverless. That's why these
-// live here in server.js instead of app.js.
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// Note: Upload URLs are served by uploadroute.js at
+//   /api/uploads/products-image/:filename
+// (uploadRoute is mounted at /api/uploads in app.js).
+// The legacy /uploads static middleware is intentionally not used because
+// it doesn't match the URL scheme persisted in ProductImage.url.
 
 const { startMetalRateScheduler } = require("./services/metalRateScheduler");
 const { fetchAndStoreMetalRates } = require("./services/metalRatesFetcher");

@@ -79,4 +79,14 @@ router.post(
   },
 );
 
+// ─── Static serving for already-stored image URLs ──────────────────────────
+// upload URLs returned by POST /product-image are under:
+//   /api/uploads/products-image/:filename
+// Since this router is mounted at /api/uploads in app.js, we must serve
+// the matching sub-path here.
+router.use(
+  "/products-image",
+  express.static(UPLOAD_DIR, { fallthrough: false }),
+);
+
 module.exports = router;
