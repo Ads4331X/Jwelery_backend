@@ -48,12 +48,12 @@ async function formatItemsForHtml(order) {
     if (it.productId) {
       try {
         let img = await prisma.productImage.findFirst({
-          where: { productId: it.productId, isPrimary: true }
+          where: { productId: it.productId, isPrimary: true },
         });
         if (!img) {
           img = await prisma.productImage.findFirst({
             where: { productId: it.productId },
-            orderBy: { sortOrder: 'asc' }
+            orderBy: { sortOrder: "asc" },
           });
         }
         if (img && img.url) {
@@ -93,8 +93,8 @@ async function sendOrderConfirmationEmail(order, customer) {
       `Regards,\nAnand Jewellers`;
 
     const itemsHtml = await formatItemsForHtml(order);
-    
-    const htmlBody = 
+
+    const htmlBody =
       `<p>Hello${customer?.firstName ? " " + customer.firstName : ""},</p>` +
       `<p>Thanks for your order! Your order has been confirmed.</p>` +
       `<p><b>Order Number:</b> ${order.orderNumber}</p>` +
@@ -193,8 +193,43 @@ async function sendOrderStatusUpdateEmail(order, customer, newStatus) {
   }
 }
 
+async function sendLowStockAlertEmail(product, { adminEditUrl } = {}) {
+  try {
+    const adminEmail = await resolveStoreEmail();
+    if (!adminEmail) return;
+
+    const subject = `Low Stock Alert — ${product?.name || "Product"}`;
+    const currentStock = product?.stock ?? 0;
+
+    // Best-effort reference to admin product edit page.
+    // If your admin UI uses a different route, adjust this in the caller.
+    const ref = adminEditUrl
+      ? adminEditUrl
+      : `https://example.com/admin/products/${product?.id || ""}`;
+
+    const textBody =
+      `Hello Admin,\n\n` +
+      `Low stock alert for: ${product?.name || "Product"}\n` +
+      `Current stock: ${currentStock}\n\n` +
+      `Edit link: ${ref}\n\n` +
+      `Regards,\nAnand Jewellers`;
+
+    await transporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: adminEmail,
+      subject,
+      text: textBody,
+    });
+  } catch (err) {
+    console.error("sendLowStockAlertEmail failed:", err);
+  }
+}
+
 module.exports = {
+  // Re-export so other email utilities can reuse it without duplicating logic.
+  resolveStoreEmail,
   sendOrderConfirmationEmail,
   sendAdminNewOrderEmail,
   sendOrderStatusUpdateEmail,
+  sendLowStockAlertEmail,
 };

@@ -5,7 +5,10 @@ const { body, validationResult } = require("express-validator");
 const {
   sendOrderConfirmationEmail,
   sendAdminNewOrderEmail,
+  sendLowStockAlertEmail,
 } = require("../../utils/orderEmails");
+
+const LOW_STOCK_THRESHOLD = 5;
 
 const router = express.Router();
 
@@ -269,6 +272,7 @@ router.post(
 
       // 1) Clear cart, decrement stock, and create address in separate transaction
       let created;
+      let lowStockEmailQueue = [];
       await prisma.$transaction(async (tx) => {
         // Clear cart first (order success leaves no cart residue)
         await tx.cartItem.deleteMany({
@@ -280,7 +284,12 @@ router.post(
         for (const it of orderItemsComputed) {
           const p = await tx.product.findUnique({
             where: { id: it.productId },
-            select: { stock: true, isActive: true },
+            select: {
+              stock: true,
+              isActive: true,
+              isLowStockAlertSent: true,
+              name: true,
+            },
           });
 
           if (!p || !p.isActive) {
@@ -297,16 +306,32 @@ router.post(
             });
           }
 
+          const newStock = Number(p.stock ?? 0) - it.quantity;
+          const shouldAlert =
+            newStock <= LOW_STOCK_THRESHOLD && p.isLowStockAlertSent === false;
+
+          // Decrement
           await tx.product.update({
             where: { id: it.productId },
             data: { stock: { decrement: it.quantity } },
           });
+
+          // Deduping: mark as sent in the same transaction to avoid races.
+          if (shouldAlert) {
+            await tx.product.update({
+              where: { id: it.productId },
+              data: { isLowStockAlertSent: true },
+            });
+
+            lowStockEmailQueue.push({
+              id: it.productId,
+              name: p.name,
+              stock: newStock,
+            });
+          }
         }
 
         const createdAddress = await tx.address.create({ data: addressRow });
-
-        // Create order + items in the second smaller transaction.
-        // (We can't return order from here anymore because this transaction is for stock/address only.)
 
         // Store created address id and then exit transaction.
         created = { createdAddressId: createdAddress.id };
@@ -385,6 +410,23 @@ router.post(
       });
 
       // Fire-and-forget emails (must not block response)
+
+      // Low stock alert emails (triggered after stock-decrement transaction commits)
+      try {
+        for (const p of lowStockEmailQueue) {
+          // fire-and-forget per requirement
+          try {
+            sendLowStockAlertEmail(p, {
+              adminEditUrl: `https://example.com/admin/products/${p.id}`,
+            });
+          } catch (e) {
+            console.error("sendLowStockAlertEmail call failed:", e);
+          }
+        }
+      } catch (e) {
+        console.error("Low stock email queue handling failed:", e);
+      }
+
       try {
         const customer = await prisma.user.findUnique({
           where: { id: userId },

@@ -9,9 +9,10 @@ const { deleteImageFiles } = require("../../utils/productImages");
 const formatProduct = (product, computedPrice) => {
   const visibleReviews = product.reviews || [];
   const reviewCount = visibleReviews.length;
-  const avgRating = reviewCount > 0
-    ? visibleReviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount
-    : 0;
+  const avgRating =
+    reviewCount > 0
+      ? visibleReviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount
+      : 0;
 
   return {
     id: product.id,
@@ -151,13 +152,13 @@ router.get("/", async (req, res) => {
   try {
     const products = await prisma.product.findMany({
       orderBy: { createdAt: "asc" },
-      include: { 
-        images: true, 
+      include: {
+        images: true,
         category: true,
         reviews: {
           where: { isVisible: true },
-          select: { rating: true }
-        }
+          select: { rating: true },
+        },
       },
     });
 
@@ -310,6 +311,16 @@ router.put(
         where: { id },
         data: {
           ...productData,
+          // Reset low-stock alert dedupe when stock is replenished.
+          // (Matches customer logic: newStock <= threshold triggers only if false.)
+          // Threshold kept in sync with the customer-order logic.
+          // If stock is replenished above threshold, allow future alerts.
+          isLowStockAlertSent:
+            typeof productData.stock === "number" &&
+            Number(productData.stock) > 5
+              ? false
+              : undefined,
+
           images:
             imageUrls.length > 0
               ? {

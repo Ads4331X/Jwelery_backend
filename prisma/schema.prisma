@@ -209,12 +209,15 @@ model Product {
   wastagePercent   Decimal          @default(0) @db.Decimal(5, 2)
   vatPercent       Decimal          @default(13) @db.Decimal(5, 2) // Nepal VAT
   stock            Int              @default(0)
+  // Deduping for low-stock email alerts
+  isLowStockAlertSent Boolean     @default(false)
   isFeatured       Boolean          @default(false)
   isDealOfDay      Boolean          @default(false)
   isActive         Boolean          @default(true)
   sortOrder        Int              @default(0)
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
+
 
   category      Category       @relation(fields: [categoryId], references: [id])
   images        ProductImage[]
