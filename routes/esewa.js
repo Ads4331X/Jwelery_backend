@@ -58,6 +58,8 @@ router.post("/initiate", async (req, res) => {
 });
 
 router.get("/verify", async (req, res) => {
+  console.log("GET /esewa/verify req.query:", req.query);
+
   const token = req.query.data;
   if (!token)
     return res.status(400).json({ result: "Missing token", success: false });
@@ -107,6 +109,8 @@ router.get("/verify", async (req, res) => {
 });
 
 router.get("/failure", async (req, res) => {
+  console.log("GET /esewa/failure req.query:", req.query);
+
   const token = req.query.data;
   if (!token) {
     return res.status(400).json({
@@ -162,6 +166,54 @@ router.get("/failure", async (req, res) => {
     updated: result.count,
     transaction_uuid,
   });
+});
+
+/**
+ * POST /esewa/failure/manual
+ *
+ * Fallback endpoint for when eSewa does NOT send a signed `data` blob back to
+ * the failure_url (e.g. user cancels the payment before it completes).
+ *
+ * We rely on the transaction_uuid stashed in sessionStorage by
+ * EsewaPaymentForm before redirecting to eSewa. This is acceptable because
+ * we are only marking a known pending transaction as abandoned — this is NOT
+ * confirming a payment succeeded (which requires eSewa's signed data + verify).
+ */
+router.post("/failure/manual", async (req, res) => {
+  const { transaction_uuid } = req.body;
+
+  if (!transaction_uuid) {
+    return res.status(400).json({
+      message: "Missing transaction_uuid in request body.",
+      success: false,
+    });
+  }
+
+  try {
+    const result = await prisma.order.updateMany({
+      where: {
+        paymentRef: transaction_uuid,
+        paymentStatus: { in: ["UNPAID"] },
+      },
+      data: {
+        paymentStatus: "FAILED",
+        status: "CANCELLED",
+      },
+    });
+
+    return res.json({
+      message: "Payment cancelled. Your order has been cancelled.",
+      success: true,
+      updated: result.count,
+      transaction_uuid,
+    });
+  } catch (error) {
+    console.error("POST /failure/manual error:", error);
+    return res.status(500).json({
+      message: "Server error while recording payment failure.",
+      success: false,
+    });
+  }
 });
 
 module.exports = router;
