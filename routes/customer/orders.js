@@ -137,6 +137,13 @@ router.post(
       .optional()
       .isString()
       .withMessage("deliveryNote must be a string"),
+
+    body("addressId")
+      .optional({ nullable: true })
+      .isString()
+      .trim()
+      .notEmpty()
+      .withMessage("addressId must be a non-empty string"),
   ],
   async (req, res) => {
     try {
@@ -144,7 +151,7 @@ router.post(
       if (bodyError) return;
 
       const userId = req.user.id;
-      const { items, address } = req.body;
+      const { items, address, addressId } = req.body;
 
       const productIds = items.map((i) => i.productId);
 
@@ -257,21 +264,44 @@ router.post(
 
       const orderNumber = await generateOrderNumber({ prismaClient: prisma });
 
-      const addressRow = {
-        userId,
-        fullName: address.fullName,
-        phone: address.phone,
-        street: address.streetAddress,
-        city: address.city,
-        country: "Nepal",
-        isDefault: false,
-      };
+      // Determine address to use: reuse existing or create new
+      let resolvedAddressId = null;
+
+      if (addressId) {
+        // Ownership check for provided addressId
+        await prisma.$transaction(async (tx) => {
+          const addr = await tx.address.findFirst({
+            where: { id: addressId, userId },
+            select: { id: true },
+          });
+          if (!addr) {
+            const err = new Error("Forbidden.");
+            err.status = 403;
+            err.expose = true;
+            throw err;
+          }
+          resolvedAddressId = addr.id;
+        });
+      } else {
+        // Create a new address from the manual fields
+        const addressRow = {
+          userId,
+          fullName: address.fullName,
+          phone: address.phone,
+          street: address.streetAddress,
+          city: address.city,
+          country: "Nepal",
+          isDefault: false,
+        };
+
+        const createdAddr = await prisma.address.create({ data: addressRow });
+        resolvedAddressId = createdAddr.id;
+      }
 
       // Prisma default interactive transaction timeout can be too low for this request.
       // Split the write work into smaller transactions to avoid 'Transaction already closed'.
 
-      // 1) Clear cart, decrement stock, and create address in separate transaction
-      let created;
+      // 1) Clear cart, decrement stock (address already resolved above)
       let lowStockEmailQueue = [];
       await prisma.$transaction(async (tx) => {
         // Clear cart first (order success leaves no cart residue)
@@ -330,27 +360,15 @@ router.post(
             });
           }
         }
-
-        const createdAddress = await tx.address.create({ data: addressRow });
-
-        // Store created address id and then exit transaction.
-        created = { createdAddressId: createdAddress.id };
-
-        return created;
       });
 
       // 2) Create order + orderItems in a new transaction (faster)
       const createdFinal = await prisma.$transaction(async (tx) => {
-        const createdAddress = await tx.address.findUnique({
-          where: { id: created.createdAddressId },
-          select: { id: true },
-        });
-
         const order = await tx.order.create({
           data: {
             orderNumber,
             userId,
-            addressId: createdAddress.id,
+            addressId: resolvedAddressId,
             status: "PENDING",
             paymentStatus: "UNPAID",
             paymentMethod: "COD",
@@ -505,6 +523,15 @@ router.get("/", authMiddleware, requireCustomer, async (req, res) => {
             weightGrams: true,
             quantity: true,
             unitPrice: true,
+            product: {
+              select: {
+                images: {
+                  orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
+                  take: 1,
+                  select: { url: true },
+                },
+              },
+            },
           },
         },
       },
@@ -526,6 +553,7 @@ router.get("/", authMiddleware, requireCustomer, async (req, res) => {
           weightGrams: it.weightGrams,
           qty: it.quantity,
           price: it.unitPrice,
+          imageUrl: it.product?.images?.[0]?.url ?? null,
         })),
       })),
     });
@@ -551,6 +579,15 @@ router.get("/:id", authMiddleware, requireCustomer, async (req, res) => {
             weightGrams: true,
             quantity: true,
             unitPrice: true,
+            product: {
+              select: {
+                images: {
+                  orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
+                  take: 1,
+                  select: { url: true },
+                },
+              },
+            },
           },
         },
       },
@@ -587,6 +624,7 @@ router.get("/:id", authMiddleware, requireCustomer, async (req, res) => {
           weightGrams: it.weightGrams,
           qty: it.quantity,
           price: it.unitPrice,
+          imageUrl: it.product?.images?.[0]?.url ?? null,
         })),
       },
     });
