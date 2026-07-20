@@ -107,9 +107,60 @@ router.get("/verify", async (req, res) => {
 });
 
 router.get("/failure", async (req, res) => {
-  return res.status(403).json({
-    message: "Payment Failed. Please try again later.",
-    success: false,
+  const token = req.query.data;
+  if (!token) {
+    return res.status(400).json({
+      message: "Missing payment data.",
+      success: false,
+    });
+  }
+
+  let decodedData;
+  try {
+    decodedData = Buffer.from(token, "base64").toString("utf-8");
+  } catch {
+    return res.status(400).json({
+      message: "Invalid payment data format.",
+      success: false,
+    });
+  }
+
+  let data;
+  try {
+    data = JSON.parse(decodedData);
+  } catch {
+    return res.status(400).json({
+      message: "Invalid payment data payload.",
+      success: false,
+    });
+  }
+
+  const transaction_uuid = data.transaction_uuid;
+  if (!transaction_uuid) {
+    return res.status(400).json({
+      message: "Missing transaction reference in payment data.",
+      success: false,
+    });
+  }
+
+  // Update order — mark payment as FAILED and cancel the order
+  // so it's taken out of the normal fulfillment queue.
+  const result = await prisma.order.updateMany({
+    where: {
+      paymentRef: transaction_uuid,
+      paymentStatus: { in: ["UNPAID"] },
+    },
+    data: {
+      paymentStatus: "FAILED",
+      status: "CANCELLED",
+    },
+  });
+
+  return res.json({
+    message: "Payment Failed. Your order has been cancelled.",
+    success: true,
+    updated: result.count,
+    transaction_uuid,
   });
 });
 
