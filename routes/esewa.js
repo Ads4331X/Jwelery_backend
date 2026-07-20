@@ -40,8 +40,11 @@ router.post("/initiate", async (req, res) => {
   };
 
   const message = `total_amount=${paymentData.total_amount},transaction_uuid=${paymentData.transaction_uuid},product_code=${paymentData.product_code}`;
-  const generatedSignature = createEsewaSignature(message, esewaConfig.secret); // use the actual export, see note below
-
+  const generatedSignature = createEsewaSignature({
+    amount: paymentData.total_amount,
+    transaction_uuid: paymentData.transaction_uuid,
+    product_code: paymentData.product_code,
+  });
   await prisma.order.update({
     where: { id: order.id },
     data: { paymentRef: transaction_uuid },
