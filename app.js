@@ -6,7 +6,8 @@ const app = express();
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 // Must echo back the requesting origin (not wildcard '*') when credentials are
 // included in the request (i.e. auth cookies). For development we allow
-// localhost:5173 (Vite). In production, the FRONTEND_URL env var is used.
+// localhost:5173 (Vite). In production, the FRONTEND_URL env var is used, and
+// any *.vercel.app domain is automatically allowed (for Vercel preview deploys).
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5000",
@@ -15,21 +16,40 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
+function isOriginAllowed(origin) {
+  if (!origin) return false;
+  // Check exact matches (local dev + configured FRONTEND_URL)
+  if (allowedOrigins.includes(origin)) return true;
+  // Allow any Vercel deployment subdomain
+  if (origin.endsWith(".vercel.app")) return true;
+  return false;
+}
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && allowedOrigins.includes(origin)) {
+
+  if (origin && isOriginAllowed(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
   } else if (!origin) {
     // server-to-server or same-origin requests
     res.setHeader("Access-Control-Allow-Origin", "*");
   }
+  // If origin is present but not allowed, we simply don't set CORS headers
+  // so the browser will enforce the same-origin policy.
+
   res.setHeader(
     "Access-Control-Allow-Methods",
     "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   );
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (req.method === "OPTIONS") return res.sendStatus(204);
+
+  if (req.method === "OPTIONS") {
+    // For preflight, we MUST send the CORS headers before returning 204,
+    // otherwise the browser rejects the actual request.
+    return res.sendStatus(204);
+  }
+
   next();
 });
 
