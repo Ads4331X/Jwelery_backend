@@ -511,7 +511,15 @@ router.get("/", authMiddleware, requireCustomer, async (req, res) => {
     const skip = Math.max(0, (Number.isFinite(page) ? page - 1 : 0) * take);
 
     const orders = await prisma.order.findMany({
-      where: { userId },
+      where: {
+        userId,
+        NOT: {
+          AND: [
+            { paymentMethod: { in: ["ESEWA", "KHALTI"] } },
+            { paymentStatus: { not: "PAID" } },
+          ],
+        },
+      },
       orderBy: { createdAt: "desc" },
       take,
       skip,
@@ -569,7 +577,16 @@ router.get("/:id", authMiddleware, requireCustomer, async (req, res) => {
     const { id } = req.params;
 
     const order = await prisma.order.findFirst({
-      where: { id, userId },
+      where: {
+        id,
+        userId,
+        NOT: {
+          AND: [
+            { paymentMethod: { in: ["ESEWA", "KHALTI"] } },
+            { paymentStatus: { not: "PAID" } },
+          ],
+        },
+      },
       include: {
         address: true,
         items: {

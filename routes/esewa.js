@@ -149,21 +149,42 @@ router.get("/failure", async (req, res) => {
 
   // Update order — mark payment as FAILED and cancel the order
   // so it's taken out of the normal fulfillment queue.
-  const result = await prisma.order.updateMany({
-    where: {
-      paymentRef: transaction_uuid,
-      paymentStatus: { in: ["UNPAID"] },
-    },
-    data: {
-      paymentStatus: "FAILED",
-      status: "CANCELLED",
-    },
+  const updatedCount = await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findFirst({
+      where: {
+        paymentRef: transaction_uuid,
+        paymentStatus: "UNPAID",
+        status: { not: "CANCELLED" },
+      },
+      include: { items: true },
+    });
+
+    if (!order) return 0;
+
+    await tx.order.update({
+      where: { id: order.id },
+      data: {
+        paymentStatus: "FAILED",
+        status: "CANCELLED",
+      },
+    });
+
+    for (const item of order.items) {
+      if (item.productId) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
+        });
+      }
+    }
+
+    return 1;
   });
 
   return res.json({
     message: "Payment Failed. Your order has been cancelled.",
     success: true,
-    updated: result.count,
+    updated: updatedCount,
     transaction_uuid,
   });
 });
@@ -198,18 +219,39 @@ router.post("/failure/manual", async (req, res) => {
     console.log("POST /failure/manual received transaction_uuid:", transaction_uuid);
     console.log("Actual DB state for this orderNumber:", orderNumber, actualOrder);
 
-    const result = await prisma.order.updateMany({
-      where: {
-        paymentRef: transaction_uuid,
-        paymentStatus: { in: ["UNPAID"] },
-      },
-      data: {
-        paymentStatus: "FAILED",
-        status: "CANCELLED",
-      },
+    const updatedCount = await prisma.$transaction(async (tx) => {
+      const order = await tx.order.findFirst({
+        where: {
+          paymentRef: transaction_uuid,
+          paymentStatus: "UNPAID",
+          status: { not: "CANCELLED" },
+        },
+        include: { items: true },
+      });
+
+      if (!order) return 0;
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          paymentStatus: "FAILED",
+          status: "CANCELLED",
+        },
+      });
+
+      for (const item of order.items) {
+        if (item.productId) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { stock: { increment: item.quantity } },
+          });
+        }
+      }
+
+      return 1;
     });
 
-    if (result.count === 0) {
+    if (updatedCount === 0) {
       return res.status(404).json({
         success: false,
         message: "Could not find a matching pending order for this transaction. It may have already been updated, or the reference is stale.",
@@ -220,7 +262,7 @@ router.post("/failure/manual", async (req, res) => {
     return res.json({
       message: "Payment cancelled. Your order has been cancelled.",
       success: true,
-      updated: result.count,
+      updated: updatedCount,
       transaction_uuid,
     });
   } catch (error) {
