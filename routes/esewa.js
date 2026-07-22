@@ -190,6 +190,14 @@ router.post("/failure/manual", async (req, res) => {
   }
 
   try {
+    const orderNumber = transaction_uuid.split('-')[0];
+    const actualOrder = await prisma.order.findFirst({
+      where: { orderNumber },
+      select: { paymentRef: true, status: true, paymentStatus: true }
+    });
+    console.log("POST /failure/manual received transaction_uuid:", transaction_uuid);
+    console.log("Actual DB state for this orderNumber:", orderNumber, actualOrder);
+
     const result = await prisma.order.updateMany({
       where: {
         paymentRef: transaction_uuid,
@@ -200,6 +208,14 @@ router.post("/failure/manual", async (req, res) => {
         status: "CANCELLED",
       },
     });
+
+    if (result.count === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Could not find a matching pending order for this transaction. It may have already been updated, or the reference is stale.",
+        updated: 0,
+      });
+    }
 
     return res.json({
       message: "Payment cancelled. Your order has been cancelled.",
