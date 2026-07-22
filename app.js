@@ -4,8 +4,26 @@ const express = require("express");
 const app = express();
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
+// Must echo back the requesting origin (not wildcard '*') when credentials are
+// included in the request (i.e. auth cookies). For development we allow
+// localhost:5173 (Vite). In production, the FRONTEND_URL env var is used.
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5000",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  } else if (!origin) {
+    // server-to-server or same-origin requests
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
   res.setHeader(
     "Access-Control-Allow-Methods",
     "GET, POST, PUT, PATCH, DELETE, OPTIONS",
@@ -75,7 +93,7 @@ app.use("/api/admin/orders", adminOrders);
 app.use("/api/admin/orders", adminOrdersStats);
 
 const esewaRoutes = require("./routes/esewa");
-app.use("/esewa", esewaRoutes);
+app.use("/api/esewa", esewaRoutes);
 
 const adminReviews = require("./routes/admin/reviews");
 app.use("/api/admin/reviews", adminReviews);

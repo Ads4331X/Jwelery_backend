@@ -425,6 +425,29 @@ model Banner {
 }
 
 // ─────────────────────────────────────────────────────────────
+// PENDING PAYMENTS  (eSewa flow — holds intent until verified)
+// ─────────────────────────────────────────────────────────────
+
+model PendingPayment {
+  id              String   @id @default(cuid())
+  transactionUuid String   @unique
+  userId          String
+  // JSON-serialized cart items, address, computed pricing
+  items           String   @db.Text
+  addressData     String   @db.Text
+  addressId       String?
+  computedData    String   @db.Text // full pricing breakdown + totalAmount
+  totalAmount     Decimal  @db.Decimal(12, 2)
+  status          String   @default("PENDING") // PENDING | COMPLETED | EXPIRED
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([transactionUuid])
+  @@map("pending_payments")
+}
+
+// ─────────────────────────────────────────────────────────────
 // CONTACT / ENQUIRIES
 // ─────────────────────────────────────────────────────────────
 
