@@ -4,12 +4,11 @@ const prisma = require("../config/prisma");
 const { createEsewaSignature } = require("../utils/signature");
 const authMiddleware = require("../middleware/authMiddleware");
 const {
-  sendOrderConfirmationEmail,
-  sendAdminNewOrderEmail,
-  sendLowStockAlertEmail,
-} = require("../utils/orderEmails");
-
-const LOW_STOCK_THRESHOLD = 5;
+  createPendingPayment,
+  finalizePendingPayment,
+  cancelPendingPayment,
+  validatePaymentInitiateRequest,
+} = require("../services/paymentPending");
 
 const router = express.Router();
 const secret = process.env.ESEWA_SECRET;
@@ -18,61 +17,6 @@ const esewaConfig = {
   merchandID: "EPAYTEST",
   esewaPaymentUrl: "https://rc-epay.esewa.com.np/api/epay/main/v2/form",
   secret: process.env.ESEWA_SECRET,
-};
-
-const computePricingFromSchema = ({ product, ratePerGram }) => {
-  const weightGrams = Number(product.weightGrams);
-  const wastagePercent = Number(product.wastagePercent ?? 0);
-  const vatPercent = Number(product.vatPercent ?? 13);
-  const makingCharge = Number(product.makingCharge);
-  const makingChargeType = product.makingChargeType;
-
-  const metalCost = Number(ratePerGram) * weightGrams;
-  const wastageCharge = metalCost * (wastagePercent / 100);
-
-  let makingChargeComputed;
-  if (makingChargeType === "PERCENTAGE") {
-    makingChargeComputed = metalCost * (makingCharge / 100);
-  } else {
-    makingChargeComputed = makingCharge;
-  }
-
-  const subtotal = metalCost + wastageCharge + makingChargeComputed;
-  const vatAmount = subtotal * (vatPercent / 100);
-  const total = subtotal + vatAmount;
-
-  const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
-
-  return {
-    metalCost: round2(metalCost),
-    wastageCharge: round2(wastageCharge),
-    makingCharge: round2(makingChargeComputed),
-    vatAmount: round2(vatAmount),
-    totalAmount: round2(total),
-  };
-};
-
-const generateOrderNumber = async ({ prismaClient }) => {
-  const year = new Date().getFullYear();
-  const random4 = () =>
-    String(Math.floor(Math.random() * 10000)).padStart(4, "0");
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const suffix = random4();
-    const orderNumber = `AJ-${year}-${suffix}`;
-    try {
-      const exists = await prismaClient.order.findUnique({
-        where: { orderNumber },
-        select: { id: true },
-      });
-      if (exists) continue;
-      return orderNumber;
-    } catch (e) {
-      // continue to retry
-    }
-  }
-
-  return `AJ-${year}-${Date.now().toString().slice(-6)}`;
 };
 
 const requireCustomer = (req, res, next) => {
@@ -86,8 +30,9 @@ const requireCustomer = (req, res, next) => {
  * POST /esewa/initiate
  *
  * Accept cart items + address from frontend (NOT an orderId).
- * Validates stock, computes pricing, creates a PendingPayment record.
- * Returns gateway URL + form fields + signature.
+ * Delegates validation, pricing, and PendingPayment creation to
+ * createPendingPayment (which is gateway-agnostic), then builds
+ * eSewa-specific fields and signature.
  * NO order is created at this point.
  */
 router.post("/initiate", authMiddleware, requireCustomer, async (req, res) => {
@@ -95,158 +40,28 @@ router.post("/initiate", authMiddleware, requireCustomer, async (req, res) => {
     const { items, address, addressId } = req.body;
     const userId = req.user.id;
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
+    // Validate request shape (gateway-agnostic)
+    const validation = validatePaymentInitiateRequest({
+      items,
+      address,
+      addressId,
+    });
+    if (!validation.valid) {
       return res
         .status(400)
-        .json({ success: false, message: "Items must be a non-empty array" });
+        .json({ success: false, message: validation.message });
     }
 
-    // Validate address fields if no addressId
-    if (!addressId) {
-      if (
-        !address?.fullName ||
-        !address?.phone ||
-        !address?.streetAddress ||
-        !address?.city
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Shipping address is required",
-        });
-      }
-    }
-
-    // Fetch products
-    const productIds = items.map((i) => i.productId);
-    const products = await prisma.product.findMany({
-      where: { id: { in: productIds } },
-      select: {
-        id: true,
-        name: true,
-        metalType: true,
-        weightGrams: true,
-        makingCharge: true,
-        makingChargeType: true,
-        wastagePercent: true,
-        vatPercent: true,
-        isActive: true,
-        stock: true,
-      },
+    // Create PendingPayment (gateway-agnostic: validates stock, computes pricing, stores intent)
+    const { transaction_uuid, totalAmount } = await createPendingPayment({
+      userId,
+      items,
+      address,
+      addressId,
+      prismaClient: prisma,
     });
 
-    const productsById = new Map(products.map((p) => [p.id, p]));
-
-    // Validate stock
-    for (const item of items) {
-      const p = productsById.get(item.productId);
-      if (!p || !p.isActive) {
-        return res.status(400).json({
-          success: false,
-          message: `Item failed: productId=${item.productId} is invalid or inactive`,
-        });
-      }
-      if (Number(p.stock ?? 0) < (item.qty || 1)) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for "${p.name}". Available: ${p.stock}`,
-        });
-      }
-    }
-
-    // Get metal rates
-    const metalTypes = Array.from(new Set(products.map((p) => p.metalType)));
-    const latestRates = await Promise.all(
-      metalTypes.map(async (mt) => {
-        const rate = await prisma.metalRate.findFirst({
-          where: { metalType: mt },
-          orderBy: { createdAt: "desc" },
-          select: { metalType: true, ratePerGram: true },
-        });
-        return rate;
-      }),
-    );
-
-    const ratesByType = new Map(
-      latestRates
-        .filter(Boolean)
-        .map((r) => [r.metalType, Number(r.ratePerGram)]),
-    );
-
-    for (const mt of metalTypes) {
-      if (!ratesByType.has(mt)) {
-        return res
-          .status(500)
-          .json({ success: false, message: `Metal rate missing for ${mt}` });
-      }
-    }
-
-    // Compute pricing for each item
-    const orderItemsComputed = items.map((item) => {
-      const product = productsById.get(item.productId);
-      const ratePerGram = ratesByType.get(product.metalType);
-      const qty = item.qty || 1;
-      const breakdown = computePricingFromSchema({ product, ratePerGram });
-      const totalPrice = Math.round(breakdown.totalAmount * qty * 100) / 100;
-
-      return {
-        ...item,
-        productId: product.id,
-        productName: product.name,
-        metalType: product.metalType,
-        weightGrams: Number(product.weightGrams),
-        metalRate: ratePerGram,
-        makingCharge: breakdown.makingCharge,
-        wastageCharge: breakdown.wastageCharge,
-        vatPercent: Number(product.vatPercent ?? 13),
-        vatAmountPerUnit: breakdown.vatAmount,
-        unitPrice: breakdown.totalAmount,
-        quantity: qty,
-        totalPrice,
-        metalCost: breakdown.metalCost,
-      };
-    });
-
-    const totalAmount =
-      Math.round(
-        orderItemsComputed.reduce((sum, it) => sum + it.totalPrice, 0) * 100,
-      ) / 100;
-
-    const metalRateSnapshot = Object.fromEntries(
-      latestRates
-        .filter(Boolean)
-        .map((r) => [r.metalType, Number(r.ratePerGram)]),
-    );
-
-    // Generate transaction UUID
-    const transaction_uuid = `PP-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
-
-    // Create PendingPayment
-    await prisma.pendingPayment.create({
-      data: {
-        transactionUuid: transaction_uuid,
-        userId,
-        items: JSON.stringify(orderItemsComputed),
-        addressData: JSON.stringify(address || {}),
-        addressId: addressId || null,
-        computedData: JSON.stringify({
-          totalAmount,
-          metalRateSnapshot,
-          orderItemsComputed,
-          products: products.map((p) => ({
-            id: p.id,
-            name: p.name,
-            stock: p.stock,
-          })),
-        }),
-        totalAmount,
-        status: "PENDING",
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 min expiry
-      },
-    });
-
-    // Build eSewa payment data
+    // Build eSewa payment data (gateway-specific)
     const paymentData = {
       amount: totalAmount.toString(),
       tax_amount: "0",
@@ -273,7 +88,10 @@ router.post("/initiate", authMiddleware, requireCustomer, async (req, res) => {
     });
   } catch (error) {
     console.error("POST /esewa/initiate error:", error);
-    return res.status(500).json({ success: false, message: "Server error" });
+    return res.status(error?.status || 500).json({
+      success: false,
+      message: error?.expose ? error.message : "Server error",
+    });
   }
 });
 
@@ -281,8 +99,8 @@ router.post("/initiate", authMiddleware, requireCustomer, async (req, res) => {
  * GET /esewa/verify
  *
  * eSewa redirects here after successful payment with a signed `data` blob.
- * Verifies the signature, finds the PendingPayment, creates the actual order,
- * clears cart, and marks the PendingPayment as COMPLETED.
+ * Verifies the eSewa HMAC signature, then delegates order creation to the
+ * gateway-agnostic finalizePendingPayment.
  */
 router.get("/verify", async (req, res) => {
   console.log("GET /esewa/verify req.query:", req.query);
@@ -306,7 +124,7 @@ router.get("/verify", async (req, res) => {
     JSON.stringify(data, null, 2),
   );
 
-  // Verify eSewa signature
+  // Verify eSewa signature (gateway-specific)
   const signedFields = data.signed_field_names.split(",");
   const message = signedFields.map((f) => `${f}=${data[f]}`).join(",");
   console.log("[verify] message to sign:", message);
@@ -386,214 +204,22 @@ router.get("/verify", async (req, res) => {
   }
 
   try {
-    const computedData = JSON.parse(pendingPay.computedData);
-    const addressData = JSON.parse(pendingPay.addressData);
-    const orderItemsComputed = JSON.parse(pendingPay.items);
-    const userId = pendingPay.userId;
-
-    // Resolve address
-    let resolvedAddressId = pendingPay.addressId;
-    if (!resolvedAddressId) {
-      const createdAddr = await prisma.address.create({
-        data: {
-          userId,
-          fullName: addressData.fullName,
-          phone: addressData.phone,
-          street: addressData.streetAddress,
-          city: addressData.city,
-          country: "Nepal",
-          isDefault: false,
-        },
-      });
-      resolvedAddressId = createdAddr.id;
-    }
-
-    // Generate order number
-    const orderNumber = await generateOrderNumber({
+    // Delegate order creation to the gateway-agnostic service
+    const result = await finalizePendingPayment({
+      pendingPaymentId: pendingPay.id,
+      paymentMethod: "ESEWA",
+      paymentRef: transaction_uuid,
       prismaClient: prisma,
     });
-
-    // 1) Clear cart
-    await prisma.$transaction(async (tx) => {
-      await tx.cartItem.deleteMany({
-        where: { cart: { userId } },
-      });
-    });
-
-    // 2) Create order + orderItems in a transaction
-    const createdOrder = await prisma.$transaction(async (tx) => {
-      // Decrement stock
-      let lowStockEmailQueue = [];
-      for (const it of orderItemsComputed) {
-        const p = await tx.product.findUnique({
-          where: { id: it.productId },
-          select: {
-            stock: true,
-            isActive: true,
-            isLowStockAlertSent: true,
-            name: true,
-          },
-        });
-
-        if (!p || !p.isActive) {
-          throw Object.assign(new Error("Product invalid/inactive"), {
-            status: 400,
-            expose: true,
-          });
-        }
-
-        if (Number(p.stock ?? 0) < it.quantity) {
-          throw Object.assign(new Error("Insufficient stock"), {
-            status: 400,
-            expose: true,
-          });
-        }
-
-        const newStock = Number(p.stock ?? 0) - it.quantity;
-        const shouldAlert =
-          newStock <= LOW_STOCK_THRESHOLD && p.isLowStockAlertSent === false;
-
-        await tx.product.update({
-          where: { id: it.productId },
-          data: { stock: { decrement: it.quantity } },
-        });
-
-        if (shouldAlert) {
-          await tx.product.update({
-            where: { id: it.productId },
-            data: { isLowStockAlertSent: true },
-          });
-          lowStockEmailQueue.push({
-            id: it.productId,
-            name: p.name,
-            stock: newStock,
-          });
-        }
-      }
-
-      const order = await tx.order.create({
-        data: {
-          orderNumber,
-          userId,
-          addressId: resolvedAddressId,
-          status: "PENDING",
-          paymentStatus: "PAID",
-          paymentMethod: "ESEWA",
-          paymentRef: transaction_uuid,
-          metalCost:
-            Math.round(
-              orderItemsComputed.reduce(
-                (s, it) => s + it.metalCost * it.quantity,
-                0,
-              ) * 100,
-            ) / 100,
-          makingCharge:
-            Math.round(
-              orderItemsComputed.reduce(
-                (s, it) => s + it.makingCharge * it.quantity,
-                0,
-              ) * 100,
-            ) / 100,
-          wastageCharge:
-            Math.round(
-              orderItemsComputed.reduce(
-                (s, it) => s + it.wastageCharge * it.quantity,
-                0,
-              ) * 100,
-            ) / 100,
-          vatAmount:
-            Math.round(
-              orderItemsComputed.reduce(
-                (s, it) => s + it.vatAmountPerUnit * it.quantity,
-                0,
-              ) * 100,
-            ) / 100,
-          totalAmount: computedData.totalAmount,
-          metalRateSnapshot: computedData.metalRateSnapshot,
-          notes: addressData.deliveryNote || null,
-        },
-      });
-
-      await tx.orderItem.createMany({
-        data: orderItemsComputed.map((it) => ({
-          orderId: order.id,
-          productId: it.productId,
-          productName: it.productName,
-          metalType: it.metalType,
-          weightGrams: it.weightGrams,
-          metalRate: it.metalRate,
-          makingCharge: it.makingCharge,
-          wastageCharge: it.wastageCharge,
-          vatPercent: it.vatPercent,
-          unitPrice: it.unitPrice,
-          quantity: it.quantity,
-          totalPrice: it.totalPrice,
-        })),
-      });
-
-      // Fire low stock alerts
-      for (const p of lowStockEmailQueue) {
-        try {
-          sendLowStockAlertEmail(p, {
-            adminEditUrl: `https://example.com/admin/products/${p.id}`,
-          });
-        } catch (e) {
-          console.error("sendLowStockAlertEmail call failed:", e);
-        }
-      }
-
-      return order;
-    });
-
-    // 3) Mark PendingPayment as COMPLETED
-    await prisma.pendingPayment.update({
-      where: { id: pendingPay.id },
-      data: { status: "COMPLETED" },
-    });
-
-    // Fire-and-forget emails
-    try {
-      const customer = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { id: true, email: true, firstName: true, phone: true },
-      });
-
-      const orderForEmail = {
-        ...createdOrder,
-        items: orderItemsComputed.map((it) => ({
-          productId: it.productId,
-          productName: it.productName,
-          metalType: it.metalType,
-          weightGrams: it.weightGrams,
-          unitPrice: it.unitPrice,
-          quantity: it.quantity,
-          totalPrice: it.totalPrice,
-        })),
-      };
-
-      try {
-        sendOrderConfirmationEmail(orderForEmail, customer);
-      } catch (e) {
-        console.error("Order confirmation email call failed:", e);
-      }
-
-      try {
-        sendAdminNewOrderEmail(orderForEmail, customer);
-      } catch (e) {
-        console.error("Admin new order email call failed:", e);
-      }
-    } catch (e) {
-      console.error("Order email prep failed:", e);
-    }
 
     return res.json({
       message: "Payment Successful",
       success: true,
       data: {
-        orderNumber: createdOrder.orderNumber,
-        id: createdOrder.id,
-        totalAmount: createdOrder.totalAmount,
-        status: createdOrder.status,
+        orderNumber: result.orderNumber,
+        id: result.id,
+        totalAmount: result.totalAmount,
+        status: result.status,
       },
     });
   } catch (error) {
@@ -619,7 +245,8 @@ router.get("/verify", async (req, res) => {
  * GET /esewa/failure
  *
  * eSewa redirects here when payment fails with a signed `data` blob.
- * We simply delete the PendingPayment. NO order was created, so nothing to cancel.
+ * Cancels the PendingPayment via the shared cancelPendingPayment helper.
+ * NO order was created, so nothing to cancel.
  */
 router.get("/failure", async (req, res) => {
   console.log("GET /esewa/failure req.query:", req.query);
@@ -661,12 +288,9 @@ router.get("/failure", async (req, res) => {
   }
 
   try {
-    // Delete the PendingPayment — NO order to cancel, no stock to restore
-    const result = await prisma.pendingPayment.deleteMany({
-      where: {
-        transactionUuid: transaction_uuid,
-        status: "PENDING",
-      },
+    const result = await cancelPendingPayment({
+      transactionUuid: transaction_uuid,
+      prismaClient: prisma,
     });
 
     return res.json({
@@ -702,11 +326,9 @@ router.post("/failure/manual", async (req, res) => {
   }
 
   try {
-    const result = await prisma.pendingPayment.deleteMany({
-      where: {
-        transactionUuid: transaction_uuid,
-        status: "PENDING",
-      },
+    const result = await cancelPendingPayment({
+      transactionUuid: transaction_uuid,
+      prismaClient: prisma,
     });
 
     return res.json({

@@ -7,8 +7,11 @@ const {
   sendAdminNewOrderEmail,
   sendLowStockAlertEmail,
 } = require("../../utils/orderEmails");
-
-const LOW_STOCK_THRESHOLD = 5;
+const {
+  LOW_STOCK_THRESHOLD,
+  generateOrderNumber,
+  computePricingFromSchema,
+} = require("../../services/paymentPending");
 
 const router = express.Router();
 
@@ -17,74 +20,6 @@ const requireCustomer = (req, res, next) => {
     return res.status(403).json({ success: false, message: "Forbidden." });
   }
   next();
-};
-
-const computePricingFromSchema = ({ product, ratePerGram }) => {
-  // Canonical formula (documented in prisma/schema.prisma):
-  // metalCost     = currentRatePerGram × weightGrams
-  // wastageAmt    = metalCost × (wastagePercent / 100)
-  // makingAmt     = FIXED  → makingCharge
-  //                 PERCENT → metalCost × (makingCharge / 100)
-  // subtotal      = metalCost + wastageAmt + makingAmt
-  // vatAmt        = subtotal × (vatPercent / 100)
-  // FINAL PRICE   = subtotal + vatAmt
-
-  const weightGrams = Number(product.weightGrams);
-  const wastagePercent = Number(product.wastagePercent ?? 0);
-  const vatPercent = Number(product.vatPercent ?? 13);
-  const makingCharge = Number(product.makingCharge);
-  const makingChargeType = product.makingChargeType;
-
-  const metalCost = Number(ratePerGram) * weightGrams;
-  const wastageCharge = metalCost * (wastagePercent / 100);
-
-  let makingChargeComputed;
-  if (makingChargeType === "PERCENTAGE") {
-    makingChargeComputed = metalCost * (makingCharge / 100);
-  } else {
-    // FIXED
-    makingChargeComputed = makingCharge;
-  }
-
-  const subtotal = metalCost + wastageCharge + makingChargeComputed;
-  const vatAmount = subtotal * (vatPercent / 100);
-  const total = subtotal + vatAmount;
-
-  const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
-
-  return {
-    metalCost: round2(metalCost),
-    wastageCharge: round2(wastageCharge),
-    makingCharge: round2(makingChargeComputed),
-    vatAmount: round2(vatAmount),
-    totalAmount: round2(total),
-  };
-};
-
-const generateOrderNumber = async ({ prismaClient }) => {
-  const year = new Date().getFullYear();
-  // Avoid needing a sequential counter (no extra table). Use random suffix.
-  // Retry on unique constraint.
-  const random4 = () =>
-    String(Math.floor(Math.random() * 10000)).padStart(4, "0");
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const suffix = random4();
-    const orderNumber = `AJ-${year}-${suffix}`;
-    try {
-      const exists = await prismaClient.order.findUnique({
-        where: { orderNumber },
-        select: { id: true },
-      });
-      if (exists) continue;
-      return orderNumber;
-    } catch (e) {
-      // continue to retry
-    }
-  }
-
-  // fallback: deterministic timestamp
-  return `AJ-${year}-${Date.now().toString().slice(-6)}`;
 };
 
 const validateBody = (req, res) => {
