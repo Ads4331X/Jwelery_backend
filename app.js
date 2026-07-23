@@ -123,4 +123,23 @@ app.use("/api/admin/reviews", adminReviews);
 
 app.get("/", (req, res) => res.send("Anand Jewellers API — running"));
 
+// ─── Global Error Handler ────────────────────────────────────────────────────
+app.use((err, req, res, _next) => {
+  console.error("[global-error-handler]", {
+    method: req.method,
+    url: req.originalUrl,
+    message: err.message,
+    stack: process.env.NODE_ENV !== "production" ? err.stack : undefined,
+    body: req.body,
+  });
+
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.expose ? err.message : "Internal server error",
+    ...(process.env.NODE_ENV !== "production" && err.expose
+      ? { detail: err.message }
+      : {}),
+  });
+});
+
 module.exports = app;

@@ -11,6 +11,32 @@ const app = require("./app");
 const { startMetalRateScheduler } = require("./services/metalRateScheduler");
 const { fetchAndStoreMetalRates } = require("./services/metalRatesFetcher");
 
+// ─── Environment Variable Validation ─────────────────────────────────────────
+const REQUIRED_ENV_VARS = [
+  "KHALTI_SECRET",
+  "KHALTI_GATEWAY_URL",
+  "FRONTEND_URL",
+  "JWT_SECRET",
+  "DATABASE_URL",
+];
+const missingVars = REQUIRED_ENV_VARS.filter((v) => !process.env[v]);
+if (missingVars.length > 0) {
+  console.warn(
+    "[env-warning] Missing environment variables:",
+    missingVars.join(", "),
+  );
+} else {
+  console.log("[env] All required environment variables are set.");
+}
+
+console.log("[env] KHALTI_GATEWAY_URL:", process.env.KHALTI_GATEWAY_URL);
+console.log("[env] FRONTEND_URL:", process.env.FRONTEND_URL);
+console.log("[env] KHALTI_SECRET set:", !!process.env.KHALTI_SECRET);
+console.log(
+  "[env] KHALTI_SECRET length:",
+  process.env.KHALTI_SECRET?.length ?? 0,
+);
+
 const isVercel = Boolean(process.env.VERCEL);
 
 if (require.main === module && !isVercel) {
