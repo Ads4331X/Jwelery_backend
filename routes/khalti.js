@@ -6,6 +6,7 @@ const {
   createPendingPayment,
   finalizePendingPayment,
   cancelPendingPayment,
+  validatePaymentInitiateRequest,
 } = require("../services/paymentPending");
 
 const requireCustomer = (req, res, next) => {
@@ -75,7 +76,10 @@ router.post("/initiate", authMiddleware, requireCustomer, async (req, res) => {
 
     if (!khaltiRes.ok) {
       console.error("Khalti initiate failed:", khaltiData);
-      await cancelPendingPayment(transaction_uuid, prisma);
+      await cancelPendingPayment({
+        transactionUuid: transaction_uuid,
+        prismaClient: prisma,
+      });
       return res
         .status(502)
         .json({ success: false, message: "Could not start Khalti payment." });

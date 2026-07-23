@@ -115,6 +115,9 @@ app.use("/api/admin/orders", adminOrdersStats);
 const esewaRoutes = require("./routes/esewa");
 app.use("/api/esewa", esewaRoutes);
 
+const khaltiRoutes = require("./routes/khalti");
+app.use("/api/khalti", khaltiRoutes);
+
 const adminReviews = require("./routes/admin/reviews");
 app.use("/api/admin/reviews", adminReviews);
 
