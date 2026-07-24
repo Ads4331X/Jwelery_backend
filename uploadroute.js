@@ -2,9 +2,19 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
+const { put } = require("@vercel/blob");
 const authMiddleware = require("./middleware/authMiddleware");
 const requireRole = require("./middleware/roleMiddleware");
+
+// ─── BLOB_READ_WRITE_TOKEN validation ─────────────────────────────────────────
+if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  console.error(
+    "[vercel-blob] BLOB_READ_WRITE_TOKEN is missing. " +
+      "Create a Blob store in your Vercel dashboard (Storage → Create → Blob), " +
+      "then copy the BLOB_READ_WRITE_TOKEN into your Vercel project's environment variables " +
+      "and your local .env file for development.",
+  );
+}
 
 // ─── Manual CORS for this router ─────────────────────────────────────────────
 router.use((req, res, next) => {
@@ -20,25 +30,8 @@ router.use((req, res, next) => {
   next();
 });
 
-// ─── Upload directory ─────────────────────────────────────────────────────────
-// Vercel serverless filesystem is read-only under /var/task.
-// Only /tmp is writable (but not persistent across deploys).
-const isVercel = Boolean(process.env.VERCEL);
-const UPLOAD_DIR = isVercel
-  ? path.join("/tmp", "uploads", "products-image")
-  : path.join(__dirname, "uploads", "products-image");
-
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-// ─── Multer config ────────────────────────────────────────────────────────────
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
-    const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
-    cb(null, unique);
-  },
-});
+// ─── Multer config (memoryStorage — Vercel Blob needs the raw buffer) ─────────
+const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5 MB (Vercel Blob upload limit)
 
 const fileFilter = (_req, file, cb) => {
   const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -50,9 +43,9 @@ const fileFilter = (_req, file, cb) => {
 };
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: MAX_FILE_SIZE },
 });
 
 // ─── POST /api/uploads/product-image ─────────────────────────────────────────
@@ -61,32 +54,59 @@ router.post(
   authMiddleware,
   requireRole("SUPER_ADMIN", "ADMIN"),
   upload.single("image"),
-  (req, res) => {
-    if (!req.file) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No image file provided." });
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res
+          .status(400)
+          .json({ success: false, message: "No image file provided." });
+      }
+
+      // Validate file size against Vercel Blob's 4.5 MB server-upload cap
+      if (req.file.size > MAX_FILE_SIZE) {
+        return res.status(413).json({
+          success: false,
+          message: `File too large. Maximum allowed size is ${MAX_FILE_SIZE / 1024 / 1024} MB.`,
+        });
+      }
+
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "Server misconfigured: BLOB_READ_WRITE_TOKEN is not set. " +
+            "Please add it in your Vercel dashboard (Storage → Blob) and in your local .env file.",
+        });
+      }
+
+      const ext = path.extname(req.file.originalname).toLowerCase() || ".jpg";
+      const uniqueFilename = `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
+
+      // ─── Upload to Vercel Blob ───────────────────────────────────────────
+      const blob = await put(
+        `products-image/${uniqueFilename}`,
+        req.file.buffer,
+        {
+          access: "public",
+          contentType: req.file.mimetype,
+        },
+      );
+
+      // blob.url is the real, permanent, publicly-accessible URL.
+      // No API_URL prefixing needed — Vercel Blob URLs are absolute HTTPS.
+      return res.json({ success: true, data: { url: blob.url } });
+    } catch (error) {
+      console.error("[upload-error]", error);
+      return res.status(500).json({
+        success: false,
+        message: "Image upload failed. Please try again.",
+      });
     }
-    const API_URL =
-      process.env.API_URL ||
-      (process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : `http://localhost:${process.env.PORT || 5000}`);
-    // Keep the API response stable. In production on Vercel these files may
-    // not persist, but this avoids runtime crashes.
-    const url = `${API_URL}/api/uploads/products-image/${req.file.filename}`;
-    return res.json({ success: true, data: { url } });
   },
 );
 
-// ─── Static serving for already-stored image URLs ──────────────────────────
-// upload URLs returned by POST /product-image are under:
-//   /api/uploads/products-image/:filename
-// Since this router is mounted at /api/uploads in app.js, we must serve
-// the matching sub-path here.
-router.use(
-  "/products-image",
-  express.static(UPLOAD_DIR, { fallthrough: false }),
-);
+// ─── Static serving NOT needed ────────────────────────────────────────────
+// Vercel Blob URLs are served directly by Vercel's CDN, not by Express.
+// The old express.static("/products-image", ...) middleware has been removed.
 
 module.exports = router;

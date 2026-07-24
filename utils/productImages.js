@@ -1,40 +1,31 @@
-const fs = require("fs");
-const path = require("path");
+const { del } = require("@vercel/blob");
 
-// In your codebase, product images are uploaded to:
-// uploads/products-image/<filename>
-const PRODUCTS_IMAGE_DIR = path.join(
-  process.cwd(),
-  "uploads",
-  "products-image",
-);
+/**
+ * Delete product images from Vercel Blob storage.
+ *
+ * @param {string[]} urls - Array of Vercel Blob URLs to delete.
+ *
+ * Because Vercel Blob URLs are absolute HTTPS URLs, we can directly pass
+ * them to del(). No filename extraction or filesystem path manipulation
+ * is needed.
+ *
+ * In production (Vercel) and local development, this deletes from the same
+ * real Blob store as long as BLOB_READ_WRITE_TOKEN is set.
+ */
+const deleteImageFiles = async (urls = []) => {
+  if (!Array.isArray(urls) || urls.length === 0) return;
 
-const extractFilename = (urlOrPath) => {
-  if (!urlOrPath) return null;
-  const str = String(urlOrPath);
-  // If it's a URL, grab the last segment.
-  const parts = str.split("/").filter(Boolean);
-  return parts.length ? parts[parts.length - 1] : null;
-};
-
-const deleteImageFiles = (urls = []) => {
-  if (!Array.isArray(urls)) return;
-
-  for (const u of urls) {
-    const filename = extractFilename(u);
-    if (!filename) continue;
-
-    const filePath = path.join(PRODUCTS_IMAGE_DIR, filename);
-
+  const deletePromises = urls.map(async (url) => {
+    if (!url || typeof url !== "string") return;
     try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
+      await del(url);
     } catch (err) {
       // Don't crash the request when cleanup fails
-      console.error("Failed to delete product image:", filePath, err);
+      console.error("Failed to delete product image from Blob:", url, err);
     }
-  }
+  });
+
+  await Promise.allSettled(deletePromises);
 };
 
 module.exports = {

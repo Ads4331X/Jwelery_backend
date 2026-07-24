@@ -343,7 +343,7 @@ router.put(
         const removedUrls = existing.images
           .map((img) => img.url)
           .filter((url) => !keptUrls.has(url));
-        deleteImageFiles(removedUrls);
+        await deleteImageFiles(removedUrls);
       }
 
       return res.json({ success: true, data: formatProduct(product) });
