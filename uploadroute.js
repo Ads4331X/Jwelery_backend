@@ -48,26 +48,51 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_SIZE },
 });
 
+// ─── Multer error middleware (must come AFTER the upload handler) ────────────
+// Multer v2 emits errors (file too large, wrong type) that propagate to Express
+// but get swallowed by the global handler as "Internal server error". This
+// middleware catches them specifically and returns a clear message.
+const multerErrorHandler = (err, _req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    // Multer-specific errors (e.g., file too large)
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({
+        success: false,
+        message: `File too large. Maximum allowed size is ${MAX_FILE_SIZE / 1024 / 1024} MB.`,
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      message: `Upload error: ${err.message}`,
+    });
+  }
+  if (err) {
+    // Custom errors (e.g., from fileFilter)
+    return res.status(400).json({
+      success: false,
+      message: err.message || "Upload error.",
+    });
+  }
+  next();
+};
+
 // ─── POST /api/uploads/product-image ─────────────────────────────────────────
 router.post(
   "/product-image",
   authMiddleware,
   requireRole("SUPER_ADMIN", "ADMIN"),
-  upload.single("image"),
+  (req, res, next) => {
+    upload.single("image")(req, res, (err) => {
+      if (err) return multerErrorHandler(err, req, res, next);
+      next();
+    });
+  },
   async (req, res) => {
     try {
       if (!req.file) {
         return res
           .status(400)
           .json({ success: false, message: "No image file provided." });
-      }
-
-      // Validate file size against Vercel Blob's 4.5 MB server-upload cap
-      if (req.file.size > MAX_FILE_SIZE) {
-        return res.status(413).json({
-          success: false,
-          message: `File too large. Maximum allowed size is ${MAX_FILE_SIZE / 1024 / 1024} MB.`,
-        });
       }
 
       if (!process.env.BLOB_READ_WRITE_TOKEN) {
@@ -99,7 +124,7 @@ router.post(
       console.error("[upload-error]", error);
       return res.status(500).json({
         success: false,
-        message: "Image upload failed. Please try again.",
+        message: `Image upload failed: ${error.message || "Please try again."}`,
       });
     }
   },
